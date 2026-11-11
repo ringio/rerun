@@ -324,8 +324,12 @@ export async function exchangeCode(ctx: OAuthContext, code: string): Promise<Exc
     }
 }
 
+// `scope` is only needed for the authorize URL, already built when the cookie is written. Kept in,
+// a provider advertising many scopes (PostHog: 240) pushes the cookie past the browser's 4 KB limit,
+// the browser drops it and the callback answers "Session expired".
 export function encodeContext(ctx: OAuthContext): string {
-    return sealContext(ctx)
+    const { scope: _authorizeOnly, ...cookieContext } = ctx
+    return sealContext(cookieContext)
 }
 
 export function decodeContext(raw: string): OAuthContext {

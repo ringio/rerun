@@ -347,9 +347,9 @@ describe('encodeContext / decodeContext', () => {
         vi.unstubAllEnvs()
     })
 
-    it('round-trips the context, unicode included', () => {
-        const ctx = { ...CTX, serverName: 'Notion été', scope: 'a b', mobileGrant: 'g' }
-        expect(decodeContext(encodeContext(ctx))).toEqual(ctx)
+    it('round-trips the context, unicode included, without the authorize-only scope', () => {
+        const ctx = { ...CTX, serverName: 'Notion été', mobileGrant: 'g' }
+        expect(decodeContext(encodeContext({ ...ctx, scope: 'a b' }))).toEqual(ctx)
     })
 
     it('throws on a cookie that is not an encoded context', () => {
