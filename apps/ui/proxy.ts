@@ -153,5 +153,7 @@ export const config = {
         // above would otherwise hand to the app's own files instead of the site's.
         { source: '/:path*', has: [{ type: 'host', value: '.+\\.rerun\\.site' }] },
         { source: '/:path*', has: [{ type: 'host', value: '.+\\.localhost' }] },
+        // Ring.io's self-hosted PUBLISH_HOST. The matcher is read at build time, so it cannot follow the env.
+        { source: '/:path*', has: [{ type: 'host', value: '.+\\.bot-pages\\.ec2\\.ringio\\.com' }] },
     ],
 }
