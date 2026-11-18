@@ -23,7 +23,7 @@ import { usePaidAppsStore } from '@/stores/paid-apps.store'
 import { AppIcon } from '@/components/apps/PaidAppViews'
 import { useEnabledPaidApps } from '@/components/layout/FeatureFlagsProvider'
 import { appInfo } from '@/lib/apps/catalog'
-import type { AppSlug } from '@/lib/apps/types'
+import { isAppSlug, type AppSlug } from '@/lib/apps/types'
 import { useSession } from '@/supabase/session/SessionProvider'
 
 import { BillingDialogShell } from './billing/BillingDialogShell'
@@ -205,7 +205,8 @@ function CreditPurchaseShell({ onClose }: { onClose: () => void }) {
 // The paid apps are not part of the lifetime plan: they are bought apart, from their own dialog.
 function LifetimeShell({ onConnectAi, onOpenApp }: { onConnectAi: () => void; onOpenApp: (slug: AppSlug) => void }) {
     const t = useTranslations('billing.dialog')
-    const apps = useEnabledPaidApps()
+    // Without cloud/, @rerun/cloud/apps types a slug as a plain string.
+    const apps = useEnabledPaidApps().filter(isAppSlug)
     return (
         <DialogContent aria-describedby={undefined} className="bg-popover sm:max-w-md">
             <DialogTitle className="sr-only">{t('title')}</DialogTitle>
