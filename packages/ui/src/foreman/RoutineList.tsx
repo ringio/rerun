@@ -1,10 +1,10 @@
 'use client'
 
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 
 import { cn } from '../cn'
-import { Input } from '../forms'
+import { Input, useRenameField } from '../forms'
 import { ChevronDownIcon } from '../icons'
 import { AgentBuddy } from '../iso-grid/components/buddy/AgentBuddy'
 import { ScrollFade, Switch } from '../primitives'
@@ -34,12 +34,15 @@ export type RoutineEntry = {
 export type RoutineListProps<T extends RoutineEntry> = {
     routines: T[]
     now: number
-    agentNameOf: (agentId: string) => string
+    /** Left out where every routine is the same coworker's: the rows drop its face and its name. */
+    agentNameOf?: (agentId: string) => string
     onOpen: (routine: T) => void
     /** Left out, the switch only shows the state: the landing demo has nothing to save it to. */
     onToggle?: (routine: T, enabled: boolean) => void
     isSaving?: (routine: T) => boolean
     renderMenu?: (routine: T) => ReactNode
+    /** Under the rule, the line about the last run. */
+    renderFooter?: (routine: T) => ReactNode
     renamingKey?: string | null
     onRename?: (routine: T, name: string) => void
     onCancelRename?: () => void
@@ -125,12 +128,13 @@ export function RoutineList<T extends RoutineEntry>({ routines, now, docked = fa
 
 type RoutineRowProps<T extends RoutineEntry> = Omit<RoutineListProps<T>, 'routines' | 'docked' | 'className'> & { routine: T }
 
-function RoutineRow<T extends RoutineEntry>({ routine, now, agentNameOf, onOpen, onToggle, isSaving, renderMenu, renamingKey, onRename, onCancelRename }: RoutineRowProps<T>) {
+function RoutineRow<T extends RoutineEntry>({ routine, now, agentNameOf, onOpen, onToggle, isSaving, renderMenu, renderFooter, renamingKey, onRename, onCancelRename }: RoutineRowProps<T>) {
     const t = useKitTranslations()
     const renaming = renamingKey === routineKey(routine)
     const open = () => !renaming && onOpen(routine)
-    const rule = [routine.frequency, agentNameOf(routine.agentId)].filter(Boolean).join(' · ')
+    const rule = [routine.frequency, agentNameOf?.(routine.agentId)].filter(Boolean).join(' · ')
     const blockedBySetup = Boolean(routine.setupPending) && !routine.enabled
+    const footer = renderFooter?.(routine)
 
     return (
         <div
@@ -140,9 +144,11 @@ function RoutineRow<T extends RoutineEntry>({ routine, now, agentNameOf, onOpen,
             onKeyDown={event => event.target === event.currentTarget && event.key === 'Enter' && open()}
             className="group flex min-h-16 cursor-pointer items-center gap-3 px-4 py-3 outline-none transition-colors hover:bg-accent/30 focus-visible:bg-accent/30"
         >
-            <span className="shrink-0">
-                <AgentBuddy agentId={routine.agentId} size={28} animated={false} facing="right" mood={routine.enabled ? 'idle' : 'asleep'} />
-            </span>
+            {agentNameOf && (
+                <span className="shrink-0">
+                    <AgentBuddy agentId={routine.agentId} size={28} animated={false} facing="right" mood={routine.enabled ? 'idle' : 'asleep'} />
+                </span>
+            )}
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 {renaming ? (
                     <RenameField name={routine.name} onSubmit={name => onRename?.(routine, name)} onCancel={() => onCancelRename?.()} />
@@ -150,6 +156,7 @@ function RoutineRow<T extends RoutineEntry>({ routine, now, agentNameOf, onOpen,
                     <span className={cn('truncate text-sm font-medium', routine.enabled ? 'text-foreground' : 'text-muted-foreground')}>{routine.name}</span>
                 )}
                 <StatusSubline routine={routine} now={now} rule={rule} />
+                {footer && <span className="flex text-[10px] text-muted-foreground">{footer}</span>}
             </div>
             <span className="flex shrink-0 items-center gap-1" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
                 {onToggle ? (
@@ -225,52 +232,8 @@ function LiveDot({ tone }: { tone: RoutineStatus['tone'] }) {
     )
 }
 
-// Mounted only while renaming, so the current name is the initial state.
 function RenameField({ name, onSubmit, onCancel }: { name: string; onSubmit: (name: string) => void; onCancel: () => void }) {
     const t = useKitTranslations()
-    const [value, setValue] = useState(name)
-    const inputRef = useRef<HTMLInputElement>(null)
-
-    // A menu item starts the rename: its focus restore would steal the focus from an immediate call.
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            inputRef.current?.focus()
-            inputRef.current?.select()
-        })
-        return () => clearTimeout(timer)
-    }, [])
-
-    // Unmounting the field fires its blur in Chrome, so an Escape (or an Enter) would be followed by
-    // a second submit carrying the edited value.
-    const settled = useRef(false)
-    const settle = (fn: () => void) => {
-        if (settled.current) return
-        settled.current = true
-        fn()
-    }
-
-    const submit = () =>
-        settle(() => {
-            const next = value.trim()
-            if (next && next !== name) onSubmit(next)
-            else onCancel()
-        })
-
-    return (
-        <Input
-            ref={inputRef}
-            value={value}
-            maxLength={120}
-            aria-label={t('foreman.routines.nameLabel')}
-            onChange={event => setValue(event.target.value)}
-            onBlur={submit}
-            onClick={event => event.stopPropagation()}
-            onKeyDown={event => {
-                event.stopPropagation()
-                if (event.key === 'Enter') submit()
-                if (event.key === 'Escape') settle(onCancel)
-            }}
-            className="-ml-1.5 h-6 px-1.5 text-sm font-medium"
-        />
-    )
+    const { inputProps } = useRenameField({ name, onSubmit, onCancel })
+    return <Input {...inputProps} maxLength={120} aria-label={t('foreman.routines.nameLabel')} className="-ml-1.5 h-6 px-1.5 text-sm font-medium" />
 }

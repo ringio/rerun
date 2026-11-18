@@ -1,8 +1,7 @@
 import 'server-only'
 import type { WorkspaceContext } from '@/app/api/_auth/ownership'
-import { assertModelEntitled } from '@/app/api/_services/engine-plan.service'
 import { ensureWorkspaceEngine, findWorkspaceEngine, getWorkspaceConnection } from '@/app/api/_services/workspace-engine.service'
-import { isPremiumModelEntitled } from '@rerun/cloud/billing'
+import { isClaudePlanOffered } from '@rerun/cloud/billing'
 import { RERUN_CLOUD } from '@rerun/cloud/edition'
 import {
     KEY_PROVIDERS,
@@ -15,7 +14,6 @@ import {
     isCreditExhausted,
     isCreditUsedUp,
     isModelEnabled,
-    isModelLocked,
     livePlanWindows,
     modelName,
     offeredModels,
@@ -46,6 +44,8 @@ import {
 } from '@/lib/engine/client'
 import { type CodexDeviceAuthStart, codexKeysFrom, pollCodexDeviceAuth, startCodexDeviceAuth } from '@/lib/engine/codex-oauth'
 import { pinFirst } from '@/lib/engine/model-groups'
+import { createServiceRoleClient } from '@/supabase/serviceRole'
+import { selectMaybeSingle } from '@/supabase/supabase-helpers'
 import type { BoxConnection, BoxConnectionsList, BoxConnectionUsage, BoxDefault, CreateBoxConnectionInput, EngineConnection, UpdateBoxConnectionInput } from '@/lib/engine/types'
 import { providerKeyProblem } from '@/lib/engine/verify-provider-key'
 import { assertPublicUrl } from '@/lib/net/public-fetch'
@@ -106,7 +106,6 @@ export async function listAiConnections(workspaceId: number): Promise<BoxConnect
 }
 
 export async function setWorkspaceDefaultModel(workspaceId: number, pick: BoxDefault | null): Promise<void> {
-    await assertModelEntitled(pick?.model, workspaceId)
     await engineSetBoxDefault(await getWorkspaceConnection(workspaceId), pick)
 }
 
@@ -151,6 +150,13 @@ export async function isCustomOfferedTo(workspaceId: number): Promise<boolean> {
 }
 
 
+// The mobile app and the routes reach this without the web's list, so the rule is held here too.
+async function assertClaudePlanOffered(workspaceId: number, provider: CreateBoxConnectionInput['provider']): Promise<void> {
+    if (provider !== 'claude') return
+    const { data: workspace } = await selectMaybeSingle(createServiceRoleClient(), 'workspaces', ['plan'] as const, { id: workspaceId })
+    if (!isClaudePlanOffered(workspace)) throw new ConnectionInputError('claudePlanNotOffered')
+}
+
 async function assertProviderOffered(provider: CreateBoxConnectionInput['provider'], conn: EngineConnection): Promise<void> {
     if (provider === 'custom' && !(await supportsCustomProvider(conn))) throw new ConnectionInputError('customNeedsUpdate')
     if (provider !== 'opencode') return
@@ -163,6 +169,7 @@ async function assertProviderOffered(provider: CreateBoxConnectionInput['provide
 export async function createAiConnection(workspaceId: number, params: CreateBoxConnectionInput): Promise<BoxConnection> {
     assertValidClaudeToken(params.keys)
     await assertPublicBaseUrl(params.baseUrl)
+    await assertClaudePlanOffered(workspaceId, params.provider)
     const conn = await connectionForCreate(workspaceId)
     await assertProviderOffered(params.provider, conn)
     const keyProblem = await providerKeyProblem(params.provider, params.keys, params.baseUrl)
@@ -263,7 +270,7 @@ async function takenNames(workspaceId: number): Promise<string[]> {
     return (await engineListConnections(engine.conn)).connections.map(connection => connection.name)
 }
 
-function connectionView(source: BoxConnection, list: BoxConnectionsList, credit: RerunCredit, premiumAllowed: boolean, t: SourceCopy, locale: string): AiConnectionView {
+function connectionView(source: BoxConnection, list: BoxConnectionsList, credit: RerunCredit, t: SourceCopy, locale: string): AiConnectionView {
     const status = !source.connected || source.credentialRejected ? 'reconnect' : isCreditExhausted(source, credit) ? 'credit_used_up' : 'connected'
     return {
         id: source.id,
@@ -279,7 +286,8 @@ function connectionView(source: BoxConnection, list: BoxConnectionsList, credit:
             label: model.label,
             description: modelDescription(source, model.id, t),
             enabled: isModelEnabled(source, model.id),
-            locked: isModelLocked(source.id, model.id, premiumAllowed),
+            // Always false: the app builds already in the stores still require the field.
+            locked: false,
         })),
         baseUrl: source.baseUrl ?? '',
         extraModels: source.extraModels,
@@ -287,22 +295,21 @@ function connectionView(source: BoxConnection, list: BoxConnectionsList, credit:
     }
 }
 
-// The web dialog's list, with every rule it applies (catalog, hidden and locked models, plan
+// The web dialog's list, with every rule it applies (catalog, hidden models, plan
 // windows, credit) applied here, since the app has none of them.
 export async function readAiConnectionsView(ctx: WorkspaceContext): Promise<AiConnectionsView> {
     const engine = await findWorkspaceEngine(ctx.workspace.id)
     const list = engine ? await renameAliasedModels(engine.conn, await engineListConnections(engine.conn)) : { connections: [], default: null }
     const credit = rerunCreditOf(ctx.workspace)
-    const premiumAllowed = isPremiumModelEntitled(ctx.workspace)
     const pick = effectiveDefault(list.default)
     const taken = list.connections.map(connection => connection.name)
     const locale = await recipientLocale(ctx.supabase, ctx.userId, ctx.workspace.id)
     const t = await translatorFor(locale, 'connections')
     return {
-        connections: pinFirst(list.connections, connection => connection.id === RERUN_CONNECTION_ID).map(source => connectionView(source, list, credit, premiumAllowed, t, locale)),
+        connections: pinFirst(list.connections, connection => connection.id === RERUN_CONNECTION_ID).map(source => connectionView(source, list, credit, t, locale)),
         default: { ...pick, label: modelName(pick.connectionId, pick.model) },
         credit: { percent: credit.percent, usedUp: isCreditUsedUp(credit), backOn: creditResetPhrase(credit, t, locale) },
-        addable: [...planProviders(await isOpencodeOffered(engine?.conn)), ...keyProviders(await isCustomOffered(engine?.conn))].map(provider => ({
+        addable: [...planProviders(await isOpencodeOffered(engine?.conn), { claude: isClaudePlanOffered(ctx.workspace) }), ...keyProviders(await isCustomOffered(engine?.conn))].map(provider => ({
             provider,
             kind: sourceKind(provider),
             ...providerPitch(provider, t),

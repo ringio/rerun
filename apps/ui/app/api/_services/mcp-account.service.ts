@@ -42,7 +42,6 @@ import { MAX_MEMORIES_PER_CALL, MAX_MEMORY_CHARS, MAX_UPLOAD_MB } from '@/lib/mc
 import { asBooleanRecord, asNumber, asString, asStringArray, clamp, requireConfirmation, requireString } from '@/lib/mcp/args'
 import { connectionModels, readModelPin, type ModelPin } from '@/lib/mcp/model-pin'
 import { projectRun } from '@/lib/mcp/run-projection'
-import { assertModelEntitled } from '@/app/api/_services/engine-plan.service'
 import { truncateField } from '@/lib/mcp/truncate'
 import { describeSkillFiles, normalizeSkillFilePath, planSkillFileRemovals, readSkillReferenceFile, removeSkillFiles } from '@/lib/skills/reference-files'
 import { connectorSkillOwners, readRegistry } from '@/lib/services/registry'
@@ -52,11 +51,10 @@ import { createServiceRoleClient } from '@/supabase/serviceRole'
 import { selectCount, selectMany, selectMaybeSingle } from '@/supabase/supabase-helpers'
 import { changeAgentHandle, createAgent, deleteAgent, moveAgentToBox, renameAgent } from './agent.service'
 import { declareService, installServiceSlugs } from './agent-setup.service'
-import { LOCKED_NOTICE, LOCKED_WRITE_ERROR } from './agent-content.service'
 import { ensureSessionRow, resolveAgentTarget } from './chat.service'
 import { followCoworker, recordSessionParticipant } from './notification-audience.service'
 import { resolveSpaceTarget } from './space.service'
-import { dispatchShareTool } from './mcp-shares.service'
+import { dispatchVaultTool } from './mcp-vault.service'
 import { allocateServiceInstance, listCatalogServices, listInstalledServices, loadManifest, searchCatalogServices, toAuthMethodSummaries, uninstallService } from './services.service'
 import { readTeamStatus } from './team-status.service'
 import { getWorkspaceConnection, NoEngineError } from './workspace-engine.service'
@@ -310,9 +308,6 @@ function readMemoryEntries(value: unknown): MemoryEntry[] {
 // API key's creator, the foreman's member).
 export async function dispatchAccountTool(actor: Actor, name: string, args: Record<string, unknown>, { actorUserId = null }: { actorUserId?: string | null } = {}): Promise<unknown> {
     const workspaceId = actor.workspaceId
-    // Every tool that takes a `model` pins it, on a coworker, a scheduled task, a trigger or the
-    // workspace default, so the plan is checked once for all of them.
-    if (typeof args.model === 'string') await assertModelEntitled(args.model, workspaceId)
     switch (name) {
         case 'list_spaces': {
             const supabase = createServiceRoleClient()
@@ -340,7 +335,7 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
 
         case 'get_agent': {
             const agentId = requireString(args.agentId, 'agentId')
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(agentId, actor)
+            const { conn, engineAgentId } = await resolveAgentTarget(agentId, actor)
             // A part that cannot be read still answers empty, so one failing route does not hide the
             // rest of the agent, but it is named in `unavailable`: an empty list has to mean empty.
             const unavailable: string[] = []
@@ -366,7 +361,7 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
                 handle: detail.config.name,
                 name: detail.config.displayName ?? detail.config.name,
                 description: detail.config.description,
-                soul: contentLocked ? LOCKED_NOTICE : detail.soul,
+                soul: detail.soul,
                 // The pair the box would actually run, not the pin: an agent that picked nothing
                 // still has a provider and a model, they just come from the Box default.
                 provider: detail.resolvedProvider ?? detail.config.provider,
@@ -430,9 +425,8 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
 
         case 'update_agent': {
             const agentId = requireString(args.agentId, 'agentId')
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(agentId, actor, 'manage')
+            const { conn, engineAgentId } = await resolveAgentTarget(agentId, actor, 'manage')
             const soul = typeof args.soul === 'string' ? args.soul : undefined
-            if (contentLocked && soul !== undefined) throw new Error(LOCKED_WRITE_ERROR)
 
             // Checked before the rename and the move below: a refused pin must leave nothing done.
             const checked = await checkedModelPin(conn, engineAgentId, args)
@@ -499,7 +493,6 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
             const { connections } = await engineListConnections(conn)
             const pin = readModelPin({ connectionId: requireString(args.connectionId, 'connectionId'), model: requireString(args.model, 'model') }, connections)
             if (!pin?.connectionId || !pin.model) throw new Error('set_default_model needs a connectionId and a model.')
-            await assertModelEntitled(pin.model, workspaceId)
             await engineSetBoxDefault(conn, { connectionId: pin.connectionId, model: pin.model })
             return { default: { connectionId: pin.connectionId, connectionName: connections.find(connection => connection.id === pin.connectionId)?.name ?? null, provider: pin.provider, model: pin.model } }
         }
@@ -533,19 +526,16 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
         }
 
         case 'get_skill': {
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor)
+            const { conn, engineAgentId } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor)
             const skill = await engineGetSkill(conn, engineAgentId, requireString(args.slug, 'slug'))
             const files = await describeSkillFiles(conn, engineAgentId, skill.slug, skill.files)
             const connector = connectorSkillOwners(await readRegistry(conn, engineAgentId)).get(skill.slug)
             const origin = connector ? { connector, readOnly: true } : {}
-            // A program would act on filler as if it were the procedure, so this surface says what
-            // happened rather than handing back the placeholder the panels blur.
-            return contentLocked ? { ...skill, body: LOCKED_NOTICE, locked: true, files, ...origin } : { ...skill, files, ...origin }
+            return { ...skill, files, ...origin }
         }
 
         case 'read_skill_file': {
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor)
-            if (contentLocked) throw new Error(LOCKED_NOTICE)
+            const { conn, engineAgentId } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor)
             const slug = requireString(args.slug, 'slug')
             const offset = asNumber(args.offset)
             if (args.offset !== undefined && (offset === undefined || !Number.isInteger(offset) || offset < 0)) {
@@ -555,8 +545,7 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
         }
 
         case 'upsert_skill': {
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor, 'manage')
-            if (contentLocked) throw new Error(LOCKED_WRITE_ERROR)
+            const { conn, engineAgentId } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor, 'manage')
             const files = asSkillFiles(args.files)
             // Both checks run before the write: a removal refused afterwards would fail the call
             // on a skill whose body had already been replaced.
@@ -589,8 +578,7 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
         }
 
         case 'write_memory': {
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor, 'manage')
-            if (contentLocked) throw new Error(LOCKED_WRITE_ERROR)
+            const { conn, engineAgentId } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor, 'manage')
             const memories = readMemoryEntries(args.memories)
             const written: string[] = []
             const failed: { index: number; error: string }[] = []
@@ -608,8 +596,7 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
         }
 
         case 'upload_workspace_file': {
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor, 'manage')
-            if (contentLocked) throw new Error(LOCKED_WRITE_ERROR)
+            const { conn, engineAgentId } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor, 'manage')
             const path = requireString(args.path, 'path').replace(/^\/+/, '')
             const content = typeof args.content === 'string' ? args.content : ''
             const base = agentFilesBase(engineAgentId)
@@ -640,15 +627,14 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
         }
 
         case 'list_schedules': {
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor)
+            const { conn, engineAgentId } = await resolveAgentTarget(requireString(args.agentId, 'agentId'), actor)
             const schedules = await engineListSchedules(conn, engineAgentId)
-            return { schedules: schedules.map(schedule => (contentLocked ? { ...schedule, body: LOCKED_NOTICE } : schedule)) }
+            return { schedules }
         }
 
         case 'upsert_schedule': {
             const agentId = requireString(args.agentId, 'agentId')
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(agentId, actor, 'manage')
-            if (contentLocked && args.body !== undefined) throw new Error(LOCKED_WRITE_ERROR)
+            const { conn, engineAgentId } = await resolveAgentTarget(agentId, actor, 'manage')
             const slug = asString(args.slug)
             const checked = await checkedModelPin(conn, engineAgentId, args)
 
@@ -699,15 +685,14 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
 
         case 'list_triggers': {
             const agentId = requireString(args.agentId, 'agentId')
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(agentId, actor)
+            const { conn, engineAgentId } = await resolveAgentTarget(agentId, actor)
             const triggers = await engineListTriggers(conn, engineAgentId)
-            return { triggers: await Promise.all(triggers.map(trigger => projectTrigger(agentId, contentLocked ? { ...trigger, body: LOCKED_NOTICE } : trigger))) }
+            return { triggers: await Promise.all(triggers.map(trigger => projectTrigger(agentId, trigger))) }
         }
 
         case 'upsert_trigger': {
             const agentId = requireString(args.agentId, 'agentId')
-            const { conn, engineAgentId, contentLocked } = await resolveAgentTarget(agentId, actor, 'manage')
-            if (contentLocked && args.body !== undefined) throw new Error(LOCKED_WRITE_ERROR)
+            const { conn, engineAgentId } = await resolveAgentTarget(agentId, actor, 'manage')
             const slug = asString(args.slug)
             const checked = await checkedModelPin(conn, engineAgentId, args)
 
@@ -959,11 +944,11 @@ export async function dispatchAccountTool(actor: Actor, name: string, args: Reco
         }
 
         default:
-            // Two more halves live next door, chained in that order: sharing, which any account
-            // can use, then template authoring, which resolves an expert sandbox author before it
-            // runs anything. The ungated one has to come first so an unknown name does not pay a
-            // gate it was never aiming at. The last default is the one that answers for a name no
-            // file knows.
-            return await dispatchShareTool(actor, name, args)
+            // Three more halves live next door, chained in that order: the Vault and sharing, which
+            // any account can use, then template authoring, which resolves an expert sandbox author
+            // before it runs anything. The ungated ones have to come first so an unknown name does
+            // not pay a gate it was never aiming at. The last default is the one that answers for a
+            // name no file knows.
+            return await dispatchVaultTool(actor, name, args)
     }
 }

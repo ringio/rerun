@@ -1,6 +1,8 @@
-import { parseServiceRegistryKey, sleep } from '@rerun/contracts'
+import { sleep } from '@rerun/contracts'
 import { loadManifest, markComposioAuthorized } from '@/app/api/_services/services.service'
-import { composioUserId, getConnectedAccount } from '@/lib/composio/client'
+import { getConnectedAccount } from '@/lib/composio/client'
+import { composioUserForKey } from '@/lib/vault/composio'
+import { resolveAgentTarget } from '@/app/api/_services/chat.service'
 import { COMPOSIO_COOKIE_PATH, COMPOSIO_COOKIE_PREFIX, type ComposioOAuthContext, decodeComposioContext } from '@/lib/composio/oauth'
 import { oauthPopupResponse } from '@/lib/oauth/popup-result'
 import { appReturnUrl } from '@/lib/oauth/app-return'
@@ -9,6 +11,7 @@ import { parkSignIn } from '@/lib/oauth/pending-grant'
 import { requireAgentWorkspaceId, workspaceActor } from '@/app/api/_auth/access'
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
+import type { DesktopShellChannel } from '@rerun/contracts'
 
 const ACTIVE_POLL_ATTEMPTS = 5
 const ACTIVE_POLL_DELAY_MS = 1000
@@ -40,10 +43,12 @@ export async function GET(req: Request) {
 
     // Only known once the context is decoded, and `finish` is what every exit path goes through.
     let mobile = false
+    // The desktop app's channel, when it started the sign-in: where the browser goes back to.
+    let desktop: DesktopShellChannel | undefined
     let key: string | undefined
 
     const finish = (result: CallbackResult): NextResponse => {
-        const res = mobile ? new NextResponse(null, { status: 302, headers: { Location: appReturnUrl(result) } }) : htmlResult(result, key)
+        const res = mobile ? new NextResponse(null, { status: 302, headers: { Location: appReturnUrl(result, desktop) } }) : htmlResult(result, key)
         res.cookies.delete({ name: cookieName, path: COMPOSIO_COOKIE_PATH })
         return res
     }
@@ -69,10 +74,12 @@ export async function GET(req: Request) {
 
     try {
         const grant = callbackGrant(ctx)
+        desktop = grant?.desktop
         const workspaceId = grant?.workspaceId ?? (await requireAgentWorkspaceId(ctx.agentId))
         // The session passed `manage` on the coworker's Box just above, or the grant was minted for someone who did.
         const actor = workspaceActor(workspaceId)
-        const userId = composioUserId(ctx.agentId, parseServiceRegistryKey(ctx.key).instanceId)
+        const { conn, engineAgentId } = await resolveAgentTarget(ctx.agentId, actor, 'manage')
+        const userId = await composioUserForKey(conn, workspaceId, engineAgentId, ctx.agentId, ctx.key)
         const method = (await loadManifest(ctx.key))?.authMethods.find(m => m.kind === 'composio' && m.composio)
         if (!method?.composio) return finish({ ok: false, error: `${ctx.key} has no Composio connection to set up.` })
         const authConfigId = method.composio.authConfigId

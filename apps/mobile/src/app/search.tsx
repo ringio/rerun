@@ -10,6 +10,7 @@ import { searchConversations } from '@/api/search'
 import { useAuth } from '@/auth/AuthProvider'
 import { setPendingAsk } from '@/chat/pending-ask'
 import { AgentBuddy } from '@/components/buddy/AgentBuddy'
+import { LAST_CONVERSATION } from '@/components/chat/ForemanChat'
 import { ForemanOrb } from '@/components/orb/ForemanOrb'
 import { lineOf, minutesSince, moodStatus, toHomeCoworkers, type HomeCoworker } from '@/components/home/board'
 import { CoworkerRow } from '@/components/home/CoworkerRow'
@@ -104,6 +105,7 @@ export default function Search() {
     const theme = useTheme()
     const insets = useSafeAreaInsets()
     const pane = usePaneInsets()
+    const topBar = usePaneInsets({ clearWindowControls: true })
     const team = useTeam()
     const t = useTranslations('mobileHome')
     const [query, setQuery] = useState('')
@@ -119,14 +121,15 @@ export default function Search() {
     const asked = query.trim()
 
     const openCoworker = (coworker: HomeCoworker) => router.push({ pathname: '/chat/[id]', params: { id: coworker.latest?.id ?? 'new', to: coworker.id } })
+    // Asked from outside its page, the Foreman hears it in General, as on the web.
     const askRerun = (text: string) => {
         setPendingAsk(text)
-        router.push({ pathname: '/chat/[id]', params: { id: 'new' } })
+        router.push({ pathname: '/chat/[id]', params: { id: LAST_CONVERSATION } })
     }
 
     return (
         <View style={{ flex: 1, backgroundColor: theme.background, paddingTop: insets.top + spacing.sm, paddingLeft: pane.left, paddingRight: pane.right }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md, marginLeft: topBar.left - pane.left, marginRight: topBar.right - pane.right }}>
                 <GlassButton symbol="chevron-left" label={t('search.back')} onPress={() => router.back()} />
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, height: 44, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: theme.muted }}>
                     <Icon name="search" size={15} color={theme.mutedForeground} />

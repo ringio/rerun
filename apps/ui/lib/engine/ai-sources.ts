@@ -3,7 +3,7 @@ import { catalogFor, modelLabel, modelPower, type CatalogModel } from '@/lib/eng
 import type { BoxConnection, BoxDefault } from '@/lib/engine/types'
 import { shortUntil } from '@/lib/time'
 import { formatNumber, shortDate } from '@rerun/i18n/format'
-import { PROVIDER_LABELS, RERUN_CONNECTION_ID, RERUN_MODEL, RERUN_MODELS, RERUN_TIERS, OPENCODE_SNAPSHOT, canonicalModelId, cliServesModel, isFreeOpencodeModel, isPremiumModel, opencodePlanOf, opencodeServesModel, toProviderModel, type OpencodePlan, type ProviderModel, type PlanLimitWindow, type Provider, type RerunTier } from '@rerun/contracts'
+import { PROVIDER_LABELS, RERUN_CONNECTION_ID, RERUN_MODEL, RERUN_MODELS, RERUN_TIERS, OPENCODE_SNAPSHOT, canonicalModelId, cliServesModel, isFreeOpencodeModel, opencodePlanOf, opencodeServesModel, toProviderModel, type OpencodePlan, type ProviderModel, type PlanLimitWindow, type Provider, type RerunTier } from '@rerun/contracts'
 
 // The AI providers dialog sorts every connection by who pays for it: the credit included with
 // Rerun, the user's own subscription, or the user's own API key.
@@ -72,9 +72,11 @@ export function providerGuide(provider: GuidedProvider, t: SourceCopy): { title:
 export const PLAN_PROVIDERS: AddableProvider[] = ['claude', 'codex']
 
 // OpenCode joins the subscriptions only where it can run: behind its release flag, on a machine
-// whose engine says it knows the provider.
-export function planProviders(opencodeOffered: boolean): AddableProvider[] {
-    return opencodeOffered ? [...PLAN_PROVIDERS, 'opencode'] : PLAN_PROVIDERS
+// whose engine says it knows the provider. A workspace on the restricted lifetime plan is not offered
+// the Claude plan: AppSumo will not list a deal that signs buyers in with their Claude subscription.
+export function planProviders(opencodeOffered: boolean, { claude = true }: { claude?: boolean } = {}): AddableProvider[] {
+    const providers = opencodeOffered ? [...PLAN_PROVIDERS, 'opencode' as const] : PLAN_PROVIDERS
+    return claude ? providers : providers.filter(provider => provider !== 'claude')
 }
 export const KEY_PROVIDERS: KeyProvider[] = ['anthropic', 'openai', 'google', 'openrouter']
 
@@ -154,16 +156,7 @@ export function modelName(connectionId: string, model: string) {
     return connectionId === RERUN_CONNECTION_ID && canonicalModelId(model) !== RERUN_MODEL ? `Rerun ${modelLabel(model)}` : modelLabel(model)
 }
 
-// Before paying, the hub serves Balanced for Smart and the box steps Opus, Fable and Astra down, so
-// a picker that let them through would name a model the run does not get. A locked row opens the
-// plan instead.
-export function isModelLocked(connectionId: string, model: string, premiumAllowed: boolean): boolean {
-    if (premiumAllowed) return false
-    return (connectionId === RERUN_CONNECTION_ID && model === RERUN_MODELS.smart) || isPremiumModel(model)
-}
-
-// A model the subscription's own CLI does not list on this box. Upgrading the Rerun plan would not
-// bring it, so the row is disabled rather than routed to billing. Undefined when the CLI serves it,
+// A model the subscription's own CLI does not list on this box, so the row is disabled. Undefined when the CLI serves it,
 // when it has not been asked yet, or for Claude, whose list is its picker rather than the account.
 // OpenCode's counterpart is a model it stopped publishing: its own wording, since no plan of the
 // user's is at stake.
@@ -172,9 +165,6 @@ export function cliUnavailableReason(connection: Pick<BoxConnection, 'provider' 
     if (cliServesModel(connection.provider, connection.cliModels, model)) return undefined
     return connection.cliModels?.outdated ? t('sources.unavailable.codexOutdated') : t('sources.unavailable.notInChatgptPlan')
 }
-
-// What the billing dialog is told opened it, for the funnel.
-export const PREMIUM_MODEL_BILLING_TRIGGER = 'premium_model'
 
 // None for Balanced: alone in its list, it reads as a plain "Rerun" row.
 const RERUN_TIER_DESCRIPTION: Partial<Record<RerunTier, 'fast' | 'smart'>> = { fast: 'fast', smart: 'smart' }

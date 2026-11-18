@@ -3,12 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceContext } from '@/app/api/_auth/ownership'
 
 vi.mock('server-only', () => ({}))
-const mocks = vi.hoisted(() => ({ getAgent: vi.fn(), listConnections: vi.fn(), patchAgent: vi.fn(), assertModelEntitled: vi.fn(), resolveAgentTarget: vi.fn() }))
+const mocks = vi.hoisted(() => ({ getAgent: vi.fn(), listConnections: vi.fn(), patchAgent: vi.fn(), resolveAgentTarget: vi.fn() }))
 vi.mock('@/app/api/_services/chat.service', () => ({
     resolveAgentTarget: mocks.resolveAgentTarget,
-    resolveRunTarget: async (agentId: string) => ({ conn: { host: 'box' }, engineAgentId: agentId, contentLocked: false }),
+    resolveRunTarget: async (agentId: string) => ({ conn: { host: 'box' }, engineAgentId: agentId }),
 }))
-vi.mock('@/app/api/_services/engine-plan.service', () => ({ assertModelEntitled: mocks.assertModelEntitled }))
 vi.mock('@/lib/engine/client', () => ({ getAgent: mocks.getAgent, listConnections: mocks.listConnections, patchAgent: mocks.patchAgent }))
 vi.mock('@/lib/i18n/recipient-locale', () => ({ recipientLocale: vi.fn(async () => 'en') }))
 
@@ -21,7 +20,7 @@ const connection = (patch: object) => ({ id: 'claude', name: 'Claude', provider:
 describe('agent models', () => {
     beforeEach(() => {
         Object.values(mocks).forEach(mock => mock.mockReset())
-        mocks.resolveAgentTarget.mockResolvedValue({ conn: { host: 'box' }, engineAgentId: 'eng-1', contentLocked: false })
+        mocks.resolveAgentTarget.mockResolvedValue({ conn: { host: 'box' }, engineAgentId: 'eng-1' })
         mocks.listConnections.mockResolvedValue({ connections: [connection({}), connection({ id: 'rerun', name: 'Rerun', provider: 'openrouter', models: ['rerun-fast', 'rerun-max'] }), connection({ id: 'gone', connected: false })], default: null })
         mocks.getAgent.mockResolvedValue({ config: { connectionId: 'claude', model: 'claude-opus-5-5' }, resolvedConnectionId: 'claude', resolvedModel: 'claude-opus-5-5' })
     })
@@ -46,9 +45,8 @@ describe('agent models', () => {
         expect((await readAgentModels(ctx, 'a1')).pinned).toBeNull()
     })
 
-    it('pins a model with the provider of its connection, after the plan check', async () => {
+    it('pins a model with the provider of its connection', async () => {
         await setAgentModel(ctx, 'a1', { connectionId: 'rerun', model: 'rerun-fast' })
-        expect(mocks.assertModelEntitled).toHaveBeenCalledWith('rerun-fast', 7)
         expect(mocks.patchAgent).toHaveBeenCalledWith({ host: 'box' }, 'eng-1', { connectionId: 'rerun', provider: 'openrouter', model: 'rerun-fast' })
     })
 
@@ -60,7 +58,6 @@ describe('agent models', () => {
     it('follows the box again by clearing all three fields', async () => {
         await setAgentModel(ctx, 'a1', { connectionId: null, model: null })
         expect(mocks.patchAgent).toHaveBeenCalledWith({ host: 'box' }, 'eng-1', { connectionId: null, provider: null, model: null })
-        expect(mocks.assertModelEntitled).not.toHaveBeenCalled()
     })
 
     it('reads and pins the foreman, which has no agent row', async () => {

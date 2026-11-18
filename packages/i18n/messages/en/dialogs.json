@@ -73,7 +73,8 @@
         "subscriptionOffer.arguments.unplug.label": "Selling point: the subscription can be disconnected at any time.",
         "subscriptionOffer.key.add": "Button: save the pasted API key.",
         "viewSettings.groupByRequired": "Form error of a board view: the user must pick the column whose distinct values become the board's columns.",
-        "newBox.suggestedNames": "Box names offered as chips under the Box name field: a Box groups coworkers by company division. Short, one or two words, title case where the language uses it."
+        "newBox.suggestedNames": "Box names offered as chips under the Box name field: a Box groups coworkers by company division. Short, one or two words, title case where the language uses it.",
+        "boxPicker.description": "Dialog shown in the Simple view when the workspace has several Boxes: the person picks the Box a coworker they are creating joins."
     },
     "account": {
         "emailChangeNeedsCurrentAddress": "This change still has to be confirmed from your current address.",
@@ -249,20 +250,6 @@
             }
         }
     },
-    "auth": {
-        "welcome": {
-            "title": "Welcome to Rerun",
-            "subtitle": "Create your account to start building your coworker team."
-        },
-        "build": {
-            "title": "Your team is ready to be built",
-            "subtitle": "Create your account and the Chief of Staff starts building it right away."
-        },
-        "signin": {
-            "title": "Welcome",
-            "subtitle": "Sign in or create your account to get started."
-        }
-    },
     "phoneVerification": {
         "title": "One last step",
         "subtitle": "Add your phone number."
@@ -417,9 +404,7 @@
         "title": "Add this coworker",
         "description": "Review what this coworker does, then place it on your board.",
         "sentBy": "{name} sent you a copy of this coworker. It will run on your own Box.",
-        "sentBySomeone": "Someone sent you a copy of this coworker. It will run on your own Box.",
-        "signUp": "Sign up to add this coworker",
-        "waiting": "It will be waiting for you right after."
+        "sentBySomeone": "Someone sent you a copy of this coworker. It will run on your own Box."
     },
     "templateDeepLink": {
         "unavailable": "This template link is no longer available",
@@ -662,7 +647,8 @@
     },
     "paidApp": {
         "slotAdded": "Slot added to your plan.",
-        "slotAddedTrial": "Slot added, {price} during your trial."
+        "slotAddedTrial": "Slot added, {price} during your trial.",
+        "slotRemoved": "Slot given back. It stays usable until your next renewal."
     },
     "linkedinPro": {
         "description": "The LinkedIn accounts your coworkers act with.",
@@ -696,6 +682,7 @@
     },
     "subscriptionOffer": {
         "title": "Run your coworkers on your Claude or ChatGPT plan",
+        "titleWithoutClaude": "Run your coworkers on your ChatGPT plan or an API key",
         "back": "Back",
         "connect": "Connect",
         "or": "or",
@@ -710,7 +697,9 @@
         },
         "offer": {
             "title": "Rerun works better with your Claude or ChatGPT subscription",
-            "description": "Connect it and your coworkers run on the plan you already pay for."
+            "description": "Connect it and your coworkers run on the plan you already pay for.",
+            "titleWithoutClaude": "Your coworkers run on your own AI",
+            "descriptionWithoutClaude": "Connect your ChatGPT plan or an API key, and your coworkers run on it."
         },
         "arguments": {
             "ownPlan": {
@@ -760,5 +749,10 @@
             "keyDetail": "Your coworkers now run on this key.",
             "done": "Done"
         }
+    },
+    "boxPicker": {
+        "title": "Choose a Box",
+        "description": "The new coworker joins it, on a free spot.",
+        "coworkers": "{count, plural, =0 {No coworker yet} one {# coworker} other {# coworkers}}"
     }
 }

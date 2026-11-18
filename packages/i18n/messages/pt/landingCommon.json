@@ -1,7 +1,7 @@
 {
     "site": {
-        "title": "Rerun: funcionários de IA que rodam no seu plano do ChatGPT ou Claude",
-        "description": "Contrate funcionários de IA para vendas, suporte, marketing e administração. Eles rodam no seu plano do ChatGPT ou Claude, com créditos incluídos ou sua chave de API. Teste grátis de {trialDays} dias."
+        "title": "Rerun: funcionários de IA no seu plano ChatGPT ou Claude",
+        "description": "Funcionários de IA para vendas, suporte, marketing e gestão, no seu plano ChatGPT ou Claude, créditos inclusos ou sua chave de API. {trialDays} dias grátis."
     },
     "nav": {
         "items": {
@@ -160,6 +160,8 @@
         "main": "Principal",
         "starOnGithub": "Star no GitHub",
         "login": "Entrar",
+        "download": "Baixar",
+        "openWebApp": "Abrir o app web",
         "browseAll": {
             "label": "Ver todos os templates",
             "description": "A biblioteca inteira, todas as categorias numa página."
@@ -209,6 +211,7 @@
             "legal": "Jurídico"
         },
         "resources": {
+            "about": "Sobre",
             "docs": "Docs",
             "github": "GitHub",
             "pricing": "Preços",
@@ -258,11 +261,6 @@
             "other": "Outros"
         },
         "cookieSettings": "Configurações de cookies"
-    },
-    "languageBanner": {
-        "offer": "Esta página está disponível em português.",
-        "open": "Ler em português",
-        "dismiss": "Dispensar"
     },
     "discord": "Entre no nosso Discord",
     "tabNudge": {

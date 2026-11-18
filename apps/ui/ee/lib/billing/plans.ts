@@ -10,7 +10,7 @@
 // applySubscriptionToWorkspace); after that snapshot the columns are freely editable per workspace,
 // independent of the subscription.
 
-import { BASE_PLAN, CREDIT_USD_PER_PACK, TRIAL_CREDIT_USD, ZERO_QUANTITIES, type AddonQuantities, type BillingInterval } from '@rerun/contracts'
+import { BASE_PLAN, TRIAL_CREDIT_USD, type BillingInterval } from '@rerun/contracts'
 
 export {
     ADDONS,
@@ -94,28 +94,37 @@ export type WorkspaceLimitColumns = {
     rerun_budget_micros: number
 }
 
-// Derive the workspace limit columns from add-on quantities. Coworkers, model access, custom
-// integrations and seats are no longer differentiators: every subscribed workspace gets everything,
-// so the team can be invited from day one. A trial is capped to TRIAL_ACTIVE_AGENTS by the webhook.
-export function quantitiesToColumns(q: AddonQuantities): WorkspaceLimitColumns {
+// The workspace limit columns of the plan. Coworkers, model access, custom integrations and seats
+// are no longer differentiators: every subscribed workspace gets everything, so the team can be
+// invited from day one, and its monthly credit is the plan's own. A trial is capped to
+// TRIAL_ACTIVE_AGENTS by the webhook. Also the columns a workspace gets at signup.
+export function baseLimitsToColumns(): WorkspaceLimitColumns {
     return {
         max_agents: null,
         max_seats: null,
         model_access: 'best',
         custom_integrations: true,
-        rerun_budget_micros: (BASE_PLAN.creditUsd + q.credit_pack * CREDIT_USD_PER_PACK) * MICROS_PER_USD,
+        rerun_budget_micros: BASE_PLAN.creditUsd * MICROS_PER_USD,
     }
 }
 
-// The base plan with no add-ons, before anything is paid: the columns a workspace gets at signup.
-export function baseLimitsToColumns(): WorkspaceLimitColumns {
-    return quantitiesToColumns(ZERO_QUANTITIES)
-}
-
+// Every lifetime code opens the restricted plan: AppSumo will not list a deal that signs buyers in
+// with their Claude subscription. Support moves a workspace to the full lifetime plan by hand.
 export const LIFETIME_PLAN_SLUG = 'lifetime'
+export const LIFETIME_RESTRICTED_PLAN_SLUG = 'lifetime_restricted'
 
 export function isLifetimePlan(workspace: { plan: string | null } | null | undefined): boolean {
-    return workspace?.plan === LIFETIME_PLAN_SLUG
+    return workspace?.plan === LIFETIME_PLAN_SLUG || workspace?.plan === LIFETIME_RESTRICTED_PLAN_SLUG
+}
+
+export function isClaudePlanOffered(workspace: { plan: string | null } | null | undefined): boolean {
+    return workspace?.plan !== LIFETIME_RESTRICTED_PLAN_SLUG
+}
+
+// LinkedIn Pro and WhatsApp Pro: sold as slots on the plan, and to the full lifetime plan on a
+// subscription of their own. An AppSumo workspace stays without them.
+export function arePaidAppsOffered(workspace: { plan: string | null } | null | undefined): boolean {
+    return workspace?.plan !== LIFETIME_RESTRICTED_PLAN_SLUG
 }
 
 // What an AppSumo code buys for good: unlimited coworkers and seats on its machine, and no Rerun

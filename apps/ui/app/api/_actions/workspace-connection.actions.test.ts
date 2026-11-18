@@ -4,11 +4,17 @@ import { NoPlanError } from '@/app/api/_services/capacity.service'
 import { ensureWorkspaceEngine, findWorkspaceEngine, getWorkspaceConnection } from '@/app/api/_services/workspace-engine.service'
 import * as engine from '@/lib/engine/client'
 import { providerKeyProblem } from '@/lib/engine/verify-provider-key'
+import { createServiceRoleClient } from '@/supabase/serviceRole'
+import { fakeSupabase } from '@/test/supabase-fake'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createAiConnectionAction, updateAiConnectionKeysAction } from './workspace-connection.actions'
 
+// The lifetime plans only exist on Rerun Cloud: pinned to ee/, whatever the build resolves @rerun/cloud/billing to.
+vi.mock('@rerun/cloud/billing', async importOriginal => ({
+    ...(await importOriginal<object>()),
+    isClaudePlanOffered: (await vi.importActual<typeof import('@/ee/lib/billing/plans')>('@/ee/lib/billing/plans')).isClaudePlanOffered,
+}))
 vi.mock('@/app/api/_auth/ownership', () => ({ requireAdminContext: vi.fn(), requireWorkspaceId: vi.fn() }))
-vi.mock('@/app/api/_services/engine-plan.service', () => ({ assertModelEntitled: vi.fn() }))
 vi.mock('@/app/api/_services/capacity.service', () => ({
     NoPlanError: class NoPlanError extends Error {
         constructor() {
@@ -27,6 +33,7 @@ vi.mock('@/lib/engine/client', () => ({
     updateConnectionKeys: vi.fn(),
 }))
 vi.mock('@/lib/engine/verify-provider-key', () => ({ providerKeyProblem: vi.fn() }))
+vi.mock('@/supabase/serviceRole', () => ({ createServiceRoleClient: vi.fn() }))
 vi.mock('@/lib/engine/claude-oauth', () => ({ buildClaudeAuthorize: vi.fn(), exchangeClaudeCode: vi.fn() }))
 vi.mock('@/lib/engine/codex-oauth', () => ({ codexKeysFrom: vi.fn(), pollCodexDeviceAuth: vi.fn(), startCodexDeviceAuth: vi.fn() }))
 
@@ -40,6 +47,27 @@ beforeEach(() => {
     vi.mocked(requireAdminContext).mockResolvedValue({ workspace: { id: 7 }, role: 'admin' } as never)
     vi.mocked(providerKeyProblem).mockResolvedValue(null)
     vi.mocked(engine.createConnection).mockResolvedValue(created as never)
+})
+
+function workspaceOnPlan(plan: string) {
+    vi.mocked(createServiceRoleClient).mockReturnValue(fakeSupabase(table => (table === 'workspaces' ? { data: { plan } } : undefined)).client)
+}
+
+describe('createAiConnectionAction with the Claude plan', () => {
+    const claude = { name: 'Claude', provider: 'claude' as const, models: [], extraModels: [], keys: {} }
+
+    it('refuses it on a restricted lifetime workspace, before reaching the machine', async () => {
+        workspaceOnPlan('lifetime_restricted')
+        await expect(createAiConnectionAction(claude)).resolves.toMatchObject({ success: false, code: 'claudePlanNotOffered' })
+        expect(engine.createConnection).not.toHaveBeenCalled()
+    })
+
+    it.each(['base', 'lifetime'])('creates it on the %s plan', async plan => {
+        workspaceOnPlan(plan)
+        vi.mocked(findWorkspaceEngine).mockResolvedValue({ instanceId: 'i', conn, managed: true })
+        await expect(createAiConnectionAction(claude)).resolves.toMatchObject({ success: true })
+        expect(engine.createConnection).toHaveBeenCalledWith(conn, claude)
+    })
 })
 
 describe('createAiConnectionAction', () => {

@@ -173,20 +173,6 @@
             }
         }
     },
-    "auth": {
-        "welcome": {
-            "title": "Bienvenido a Rerun",
-            "subtitle": "Crea tu cuenta para empezar a formar tu equipo de coworkers."
-        },
-        "build": {
-            "title": "Tu equipo está listo para crearse",
-            "subtitle": "Crea tu cuenta y el Chief of Staff empieza a montarlo enseguida."
-        },
-        "signin": {
-            "title": "Bienvenido",
-            "subtitle": "Inicia sesión o crea tu cuenta para empezar."
-        }
-    },
     "phoneVerification": {
         "title": "Un último paso",
         "subtitle": "Añade tu número de teléfono."
@@ -341,9 +327,7 @@
         "title": "Añadir este coworker",
         "description": "Revisa lo que hace este coworker y colócalo en tu tablero.",
         "sentBy": "{name} te envió una copia de este coworker. Funcionará en tu propia Box.",
-        "sentBySomeone": "Alguien te envió una copia de este coworker. Funcionará en tu propia Box.",
-        "signUp": "Regístrate para añadir este coworker",
-        "waiting": "Te estará esperando justo después."
+        "sentBySomeone": "Alguien te envió una copia de este coworker. Funcionará en tu propia Box."
     },
     "templateDeepLink": {
         "unavailable": "Este enlace de template ya no está disponible",
@@ -586,7 +570,8 @@
     },
     "paidApp": {
         "slotAdded": "Espacio añadido a tu plan.",
-        "slotAddedTrial": "Espacio añadido, {price} durante tu prueba."
+        "slotAddedTrial": "Espacio añadido, {price} durante tu prueba.",
+        "slotRemoved": "Espacio devuelto. Sigue disponible hasta tu próxima renovación."
     },
     "linkedinPro": {
         "description": "Las cuentas de LinkedIn con las que actúan tus coworkers.",
@@ -620,6 +605,7 @@
     },
     "subscriptionOffer": {
         "title": "Haz que tus coworkers funcionen con tu plan de Claude o ChatGPT",
+        "titleWithoutClaude": "Haz que tus coworkers funcionen con tu plan de ChatGPT o una clave de API",
         "back": "Atrás",
         "connect": "Conectar",
         "or": "o",
@@ -634,7 +620,9 @@
         },
         "offer": {
             "title": "Rerun funciona mejor con tu suscripción de Claude o ChatGPT",
-            "description": "Conéctala y tus coworkers funcionan con el plan que ya pagas."
+            "description": "Conéctala y tus coworkers funcionan con el plan que ya pagas.",
+            "titleWithoutClaude": "Tus coworkers funcionan con tu propia IA",
+            "descriptionWithoutClaude": "Conecta tu plan de ChatGPT o una clave de API, y tus coworkers funcionan con ella."
         },
         "arguments": {
             "ownPlan": {
@@ -684,5 +672,10 @@
             "keyDetail": "Tus coworkers ahora funcionan con esta clave.",
             "done": "Listo"
         }
+    },
+    "boxPicker": {
+        "title": "Elige una Box",
+        "description": "El nuevo coworker se une a ella, en un lugar libre.",
+        "coworkers": "{count, plural, =0 {Aún no hay coworkers} one {# coworker} other {# coworkers}}"
     }
 }

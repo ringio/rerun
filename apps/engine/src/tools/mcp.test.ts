@@ -6,6 +6,7 @@ import { vi } from 'vitest'
 process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-mcp-'))
 process.env.RERUN_API_KEY = ''
 process.env.RERUN_LOG_LEVEL = 'fatal'
+process.env.RERUN_HUB_BASE_URL = 'https://hub.example'
 
 type FakeTransport = { kind: 'stdio' | 'sse' | 'http'; target: string; options: unknown }
 type Behaviour = { connectError?: string; connectCode?: number; closeError?: string; hang?: boolean; tools?: Array<{ name: string; description?: string; inputSchema?: unknown }> }
@@ -67,7 +68,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
 
 const { beforeEach, describe, expect, it } = await import('vitest')
 const { probeMcp, resolveTransport } = await import('./mcp.js')
-const { closeAllMcp, pooledMcpTools } = await import('./mcp-pool.js')
+const { closeAllMcp, pooledMcpServers, pooledMcpToolSet } = await import('./mcp-pool.js')
 const { workspaceDir } = await import('../config/paths.js')
 
 type Server = Parameters<typeof resolveTransport>[0]
@@ -79,6 +80,8 @@ function server(overrides: Partial<Server>): Server {
 function agentWith(servers: Server[], env: Record<string, string> = {}) {
     return { id: 'mcp-agent', env, config: { mcpServers: servers, tools: {} } } as any
 }
+
+const pooledMcpTools = async (agent: Parameters<typeof pooledMcpServers>[0]) => pooledMcpToolSet(await pooledMcpServers(agent))
 
 // The pool closes asynchronously: the clients a test left open are closed before the next one counts.
 beforeEach(async () => {
@@ -105,7 +108,7 @@ describe('resolveTransport', () => {
     })
 })
 
-describe('pooledMcpTools', () => {
+describe('pooled MCP tools', () => {
     it('exposes each tool as <server>_<tool> and runs it through the client', async () => {
         mcp.behaviours.set('https://gh.example/mcp', {
             tools: [{ name: 'search', description: 'Search issues', inputSchema: { type: 'object', properties: { q: { type: 'string' } } } }, { name: 'ping' }],
@@ -162,6 +165,19 @@ describe('pooledMcpTools', () => {
         expect(await pooledMcpTools(agentWith([]))).toEqual({})
     })
 
+    it('hands back the servers that answered with their tool lists, in the order the agent declares them', async () => {
+        mcp.behaviours.set('https://down.example/mcp', { connectError: 'ECONNREFUSED' })
+        mcp.behaviours.set('https://b.example/mcp', { tools: [{ name: 'list', description: 'List things' }] })
+        mcp.behaviours.set('https://a.example/mcp', { tools: [{ name: 'ping' }, { name: 'pong' }] })
+        const servers = await pooledMcpServers(
+            agentWith([server({ name: 'b', url: 'https://b.example/mcp' }), server({ name: 'down', url: 'https://down.example/mcp' }), server({ name: 'a', url: 'https://a.example/mcp' })]),
+        )
+        expect(servers.map(pooled => [pooled.name, pooled.tools.map(tool => tool.name)])).toEqual([
+            ['b', ['list']],
+            ['a', ['ping', 'pong']],
+        ])
+    })
+
     it('resolves ${VAR} placeholders from the agent env before dialing', async () => {
         await pooledMcpTools(agentWith([server({ name: 'lin', url: 'https://lin.example/mcp', headers: { Authorization: 'Bearer ${LINEAR_KEY}' } })], { LINEAR_KEY: 'k1' }))
         expect(mcp.transports[0]).toMatchObject({ kind: 'http', target: 'https://lin.example/mcp', options: { requestInit: { headers: { Authorization: 'Bearer k1' } } } })
@@ -199,6 +215,19 @@ describe('pooledMcpTools', () => {
         const tools = await pooledMcpTools(agentWith([server({ name: 'odd', transport: 'http', command: 'npx' }), server({ name: 'odd2', transport: 'stdio', url: 'https://x.io/mcp' })]))
         expect(tools).toEqual({})
         expect(mcp.transports).toHaveLength(0)
+    })
+
+    // RER-80: the hub resolves x-rerun-agent to a coworker of the workspace, and a delegate exists
+    // only on the engine, so under its own id every hub app (Gmail through Composio) refused it.
+    it('dials a hub app as the coworker that delegated, not as the delegate', async () => {
+        const gmail = server({ name: 'gmail', url: 'https://hub.example/api/mcp/composio/gmail' })
+        await pooledMcpTools({ ...agentWith([gmail]), id: 'delegate-1', hubAgentId: 'boss' })
+        expect(mcp.transports[0]).toMatchObject({ target: 'https://hub.example/api/mcp/composio/gmail', options: { requestInit: { headers: { 'x-rerun-agent': 'boss' } } } })
+    })
+
+    it('dials a hub app under its own id when it acts for nobody else', async () => {
+        await pooledMcpTools(agentWith([server({ name: 'gmail', url: 'https://hub.example/api/mcp/composio/gmail' })]))
+        expect(mcp.transports[0]).toMatchObject({ options: { requestInit: { headers: { 'x-rerun-agent': 'mcp-agent' } } } })
     })
 })
 

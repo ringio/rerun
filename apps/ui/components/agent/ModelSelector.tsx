@@ -7,6 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ModelPillTrigger } from '@/components/agent/ModelPillTrigger'
 import { PlanLimitDetail, PlanLimitHint, RerunCreditHint, usePlanWindowsSummary, useRerunCreditDetail } from '@/components/agent/PlanLimitHint'
 import { ModelTierRow } from '@/components/agent/ModelTierRow'
+import { useClaudePlanOffered } from '@/components/connections/NoPlanNotice'
 import { PowerBars } from '@/components/ui/power-bars'
 import { TooltipDisabledReason, TooltipLabeled } from '@/components/ui/tooltip'
 import { useAgentModel } from '@/hooks/useAgentModel'
@@ -14,11 +15,10 @@ import { useAvailableModels, type ConnectionGroup } from '@/hooks/useAvailableMo
 import { useCanManageAgent } from '@/hooks/useBoxAccess'
 import { refusedModelReason } from '@/lib/engine/model-groups'
 import { useRerunCredit } from '@/hooks/useRerunCredit'
-import { PREMIUM_MODEL_BILLING_TRIGGER, pillUsage } from '@/lib/engine/ai-sources'
+import { pillUsage } from '@/lib/engine/ai-sources'
 import { modelLabel } from '@/lib/engine/models'
 import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { ChevronDownIcon, Settings2Icon, StarIcon } from '@/lib/icons'
-import { useBillingStore } from '@/stores/billing.store'
 import { useBoardStore } from '@/stores/board.store'
 import { useModelPickerStore } from '@/stores/model-picker.store'
 import { useWorkspaceSettingsStore } from '@/stores/workspace-settings.store'
@@ -75,7 +75,8 @@ export function ModelSelector({ agentId, onReadyChange, onOwnConnectionChange, o
     const connectionId = selection.connectionId ?? pinnedConnectionId ?? resolvedConnectionId
     const hasAvailable = availableGroups.length > 0
     const connectedProviders = useMemo(() => new Set(availableGroups.map(group => group.provider)), [availableGroups])
-    const missingSubscriptions = SUBSCRIPTION_PROVIDERS.filter(provider => !connectedProviders.has(provider))
+    const claudePlanOffered = useClaudePlanOffered()
+    const missingSubscriptions = SUBSCRIPTION_PROVIDERS.filter(provider => !connectedProviders.has(provider) && (claudePlanOffered || provider !== 'claude'))
     const hasOwnConnection = availableGroups.some(group => group.connectionId !== RERUN_CONNECTION_ID)
     // Only when nothing at all was chosen: an override on this conversation is still a choice, and
     // the trigger has to say which model that turn will bill.
@@ -153,11 +154,6 @@ export function ModelSelector({ agentId, onReadyChange, onOwnConnectionChange, o
         setOpen(false)
         openAiProviders()
     }, [openAiProviders])
-
-    const upgradeForModel = useCallback(() => {
-        setOpen(false)
-        useBillingStore.getState().openBilling(undefined, PREMIUM_MODEL_BILLING_TRIGGER)
-    }, [])
 
     const addProvider = useCallback(
         (provider: AddableProvider) => {
@@ -260,13 +256,6 @@ export function ModelSelector({ agentId, onReadyChange, onOwnConnectionChange, o
                                             </TooltipDisabledReason>
                                         )
                                     }
-                                    if (m.locked) {
-                                        return (
-                                            <CommandItem key={m.id} className="[&>svg:last-child]:hidden" value={`${group.label} ${m.label} ${m.id}`} onSelect={upgradeForModel}>
-                                                <ModelTierRow label={m.label} description={m.description} power={m.power} locked />
-                                            </CommandItem>
-                                        )
-                                    }
                                     const defaultStar = isDefault ? (
                                         <TooltipLabeled label={t('coworkerDefault')}>
                                             <span className="inline-flex shrink-0">
@@ -341,7 +330,7 @@ export function ModelSelector({ agentId, onReadyChange, onOwnConnectionChange, o
                             ))}
                         <CommandSeparator />
                         <CommandGroup>
-                            <AddProviderItem connectedProviders={connectedProviders} onConnect={addProvider} onManage={manage} />
+                            <AddProviderItem connectedProviders={connectedProviders} claudePlanOffered={claudePlanOffered} onConnect={addProvider} onManage={manage} />
                         </CommandGroup>
                     </CommandList>
                 </Command>

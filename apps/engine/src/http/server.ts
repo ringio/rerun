@@ -6,7 +6,6 @@ import { foremanGuard } from './foreman-guard.js'
 import { healthRoutes } from './routes/health.js'
 import { agentRoutes } from './routes/agents.js'
 import { connectionRoutes } from './routes/connections.js'
-import { planRoutes } from './routes/plan.js'
 import { chatRoutes } from './routes/chat.js'
 import { sessionRoutes } from './routes/sessions.js'
 import { memoryRoutes } from './routes/memories.js'
@@ -17,13 +16,14 @@ import { scheduleRoutes } from './routes/schedules.js'
 import { triggerRoutes } from './routes/triggers.js'
 import { runRoutes, usageRoutes } from './routes/runs.js'
 import { statsRoutes } from './routes/stats.js'
-import { rewindRoutes } from './routes/rewind.js'
 import { toolRoutes } from './routes/tools.js'
 import { updateRoutes } from './routes/update.js'
 import { doctorRoutes } from './routes/doctor.js'
 import { createFilesRouter } from './routes/files.js'
 import { brainRoutes } from './routes/brain.js'
 import { agentDesktopRoutes, desktopRoutes } from './routes/desktop.js'
+import { vaultRoutes } from './routes/vault.js'
+import { VaultConflictError } from '../vault/conflicts.js'
 import { HttpError, notFound } from '../lib/errors.js'
 import { agentExists, listAgentIdsOnDisk } from '../agents/loader.js'
 import { workspaceDir, sharedDir } from '../config/paths.js'
@@ -44,7 +44,7 @@ export function createServer(): Hono {
     api.route('/doctor', doctorRoutes)
     api.route('/tools', toolRoutes)
     api.route('/connections', connectionRoutes)
-    api.route('/plan', planRoutes)
+    api.route('/vault', vaultRoutes)
     api.route('/agents', agentRoutes)
     api.route('/agents/:id/sessions', sessionRoutes)
     api.route('/agents/:id/memories', memoryRoutes)
@@ -72,7 +72,6 @@ export function createServer(): Hono {
     api.route('/agents/:id/runs', runRoutes)
     api.route('/agents/:id/usage', usageRoutes)
     api.route('/agents/:id/stats', statsRoutes)
-    api.route('/agents/:id/rewind', rewindRoutes)
     api.route(
         '/agents/:id/files',
         createFilesRouter(c => {
@@ -90,6 +89,8 @@ export function createServer(): Hono {
     app.route('/', api)
 
     app.onError((err, c) => {
+        // A refused attachment names the coworker and the item it clashes with, for the UI to show.
+        if (err instanceof VaultConflictError) return c.json({ error: err.message, conflicts: err.conflicts }, 409)
         if (err instanceof HttpError) return c.json({ error: err.message }, err.status as 400)
         if (err instanceof Error && err.message.startsWith('Path escapes the root')) return c.json({ error: err.message }, 400)
         if (err instanceof ZodError) {

@@ -1,0 +1,106 @@
+{
+    "metaTitle": "Bienvenue",
+    "back": "Retour",
+    "continue": "Continuer",
+    "site": {
+        "title": "Quel est votre site web ?",
+        "titleNamed": "Bonjour {name}, quel est votre site web ?",
+        "description": "Nous le lisons et composons votre équipe.",
+        "label": "Site web de l'entreprise",
+        "placeholder": "acme.com",
+        "continue": "Continuer",
+        "skip": "Je n'en ai pas"
+    },
+    "industry": {
+        "title": "Quel est votre métier ?",
+        "description": "Votre équipe change avec lui.",
+        "other": "Autre",
+        "otherLabel": "Votre métier",
+        "otherPlaceholder": "Boulangerie, cabinet dentaire, salle de sport…"
+    },
+    "role": {
+        "title": "Et qu'y faites-vous ?",
+        "description": "Votre premier coworker travaille pour vous.",
+        "other": "Autre chose",
+        "otherLabel": "Votre rôle",
+        "otherPlaceholder": "Responsable Growth"
+    },
+    "roles": {
+        "founderAgencyOwner": "Fondateur / Dirigeant d'agence",
+        "accountOrClientLead": "Responsable de comptes clients",
+        "marketingCreative": "Marketing / Création",
+        "operations": "Opérations",
+        "founderStoreOwner": "Fondateur / Gérant de boutique",
+        "marketingGrowth": "Marketing / Growth",
+        "customerCare": "Service client",
+        "operationsLogistics": "Opérations / Logistique",
+        "founderCeo": "Fondateur / CEO",
+        "productOrEngineering": "Produit ou Tech",
+        "salesOrSupport": "Ventes ou Support",
+        "salesRepOrAe": "Commercial ou AE",
+        "salesLeadership": "Direction commerciale",
+        "marketingDemandGen": "Marketing / Acquisition",
+        "recruiter": "Recruteur",
+        "talentOrHrLead": "Responsable RH ou talents",
+        "founderBroker": "Fondateur / Agent immobilier",
+        "agent": "Agent",
+        "propertyOrPortfolioManager": "Gestionnaire de biens ou de patrimoine",
+        "marketing": "Marketing",
+        "founderPartner": "Fondateur / Associé",
+        "lawyerOrCounsel": "Avocat ou juriste",
+        "paralegalOrLegalOps": "Assistant juridique ou legal ops",
+        "businessDevelopment": "Développement commercial",
+        "creatorFounder": "Créateur / Fondateur",
+        "editorOrWriter": "Éditeur ou rédacteur",
+        "communityOrSocial": "Communauté ou réseaux sociaux",
+        "sponsorshipsBusiness": "Partenariats / Business",
+        "financeOrAdmin": "Finance ou Administration",
+        "projectOrTeamLead": "Chef de projet ou manager",
+        "sales": "Ventes"
+    },
+    "team": {
+        "title": "Invitez votre équipe",
+        "description": "Vos coworkers travaillent pour vous tous.",
+        "label": "Email d'un collègue",
+        "placeholder": "nom@entreprise.com",
+        "invite": "Inviter",
+        "invited": "Invité",
+        "link": "Lien d'invitation",
+        "copy": "Copier",
+        "copied": "Copié",
+        "skip": "Passer"
+    },
+    "trial": {
+        "title": "Démarrez votre essai gratuit",
+        "description": "Vos coworkers se mettent au travail dès qu'il commence.",
+        "start": "Démarrer mon essai gratuit"
+    },
+    "engine": {
+        "title": "Préparation de votre workspace",
+        "milestones": {
+            "trial": "Confirmation de votre essai…",
+            "machine": "Réservation de votre machine…",
+            "engine": "Réveil de votre Chief of Staff…"
+        },
+        "ready": "Construisons votre équipe ensemble.",
+        "greeting": "Bonjour, je suis votre Chief of Staff",
+        "greetingNamed": "Bonjour {name}, je suis votre Chief of Staff",
+        "failed": "Votre machine met plus de temps que d'habitude.",
+        "retry": "Réessayer",
+        "enterAnyway": "Entrer quand même",
+        "enter": "C'est parti",
+        "wait": "Un instant"
+    },
+    "industries": {
+        "agencies": "Agences",
+        "ecommerce": "E-commerce",
+        "saas": "SaaS",
+        "sales": "Ventes",
+        "recruiting": "Recrutement",
+        "real-estate": "Immobilier",
+        "legal": "Juridique et conformité",
+        "creators": "Créateurs",
+        "productivity": "Productivité",
+        "other": "Autre"
+    }
+}

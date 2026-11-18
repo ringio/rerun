@@ -19,7 +19,11 @@ import {
     revokeTemplateSubscription,
 } from '@/ee/services/template-purchase.service'
 import { isTemplateCheckoutSession, isTemplateSubscription } from '@/ee/lib/billing/marketplace'
-import { stripe, subscriptionOfInvoice } from '@/ee/lib/billing/stripe'
+import { isCreditCheckoutSession, recordCreditCheckoutSession, recordCreditInvoice, refundCreditPurchase } from '@/ee/services/credit-purchase.service'
+import { deliverLifetimeCheckout, isLifetimeCheckoutSession, refundLifetimePurchase } from '@/ee/services/lifetime-deal.service'
+import { idOf, stripe, subscriptionOfInvoice } from '@/ee/lib/billing/stripe'
+import { isLifetimeAddonsCheckoutSession, isLifetimeAddonsSubscription } from '@/ee/lib/billing/lifetime-addons'
+import { applyLifetimeAddonsSubscription } from '@/ee/services/lifetime-addons.service'
 import type Stripe from 'stripe'
 import { claimStripeEvent, markStripeEventProcessed, releaseStripeEvent, unclaimedResponse } from './idempotency'
 
@@ -29,7 +33,8 @@ import { claimStripeEvent, markStripeEventProcessed, releaseStripeEvent, unclaim
 //
 // A workspace's plan and its template subscriptions live on the same Stripe customer and arrive
 // through the same `customer.subscription.*` events, so every subscription case routes on
-// `isTemplateSubscription` before touching anything. The billing service repeats that check,
+// `isTemplateSubscription` before touching anything, and so does the subscription that holds a lifetime
+// workspace's slots (`isLifetimeAddonsSubscription`). The billing service repeats that check,
 // deliberately: a purchase must never be able to rewrite a workspace's billing state.
 export async function POST(req: Request) {
     const secret = process.env.STRIPE_WEBHOOK_SECRET
@@ -55,6 +60,19 @@ export async function POST(req: Request) {
                 const session = event.data.object
                 if (isTemplateCheckoutSession(session)) {
                     if (session.payment_status === 'paid') await recordTemplatePurchase(session)
+                    break
+                }
+                if (isCreditCheckoutSession(session)) {
+                    await recordCreditCheckoutSession(session)
+                    break
+                }
+                if (isLifetimeCheckoutSession(session)) {
+                    await deliverLifetimeCheckout(session)
+                    break
+                }
+                if (isLifetimeAddonsCheckoutSession(session)) {
+                    const subscriptionId = idOf(session.subscription)
+                    if (subscriptionId) await applyLifetimeAddonsSubscription(await stripe.subscriptions.retrieve(subscriptionId), { adopt: true })
                     break
                 }
                 // Setup mode carries no `session.subscription`: it is the card collected on a trial
@@ -86,6 +104,10 @@ export async function POST(req: Request) {
             // both. Whichever arrives first and can resolve a card does the work; the other finds
             // the subscription already settled and stands down.
             case 'customer.subscription.created': {
+                if (isLifetimeAddonsSubscription(event.data.object)) {
+                    await applyLifetimeAddonsSubscription(event.data.object, { adopt: true })
+                    break
+                }
                 if (isTemplateSubscription(event.data.object)) {
                     await applyTemplateSubscription(event.data.object)
                     break
@@ -96,6 +118,10 @@ export async function POST(req: Request) {
             }
             case 'customer.subscription.updated': {
                 const subscription = event.data.object
+                if (isLifetimeAddonsSubscription(subscription)) {
+                    await applyLifetimeAddonsSubscription(subscription, { adopt: false })
+                    break
+                }
                 if (isTemplateSubscription(subscription)) {
                     await applyTemplateSubscription(subscription)
                     break
@@ -112,7 +138,8 @@ export async function POST(req: Request) {
                 break
             }
             case 'customer.subscription.deleted':
-                if (isTemplateSubscription(event.data.object)) await revokeTemplateSubscription(event.data.object)
+                if (isLifetimeAddonsSubscription(event.data.object)) await applyLifetimeAddonsSubscription(event.data.object, { adopt: false })
+                else if (isTemplateSubscription(event.data.object)) await revokeTemplateSubscription(event.data.object)
                 else await markSubscriptionCanceled(event.data.object)
                 break
             // The bank confirmed a plan increase Stripe had held: the rest of that change (its
@@ -124,10 +151,11 @@ export async function POST(req: Request) {
             // The ledger line of every template subscription cycle, first invoice included: a
             // checkout only ever fires once, renewals only show up here.
             // Each step runs whatever the others do: a template ledger that keeps failing must not
-            // hold back the plan's own stamp through every retry. All three are safe to replay.
+            // hold back the plan's own stamp through every retry. All of them are safe to replay.
             case 'invoice.paid': {
                 const invoice = event.data.object
                 await runEach([
+                    () => recordCreditInvoice(invoice),
                     () => recordTemplateRenewal(invoice),
                     () => reportPlanInvoicePaid(invoice),
                     // The only place a real charge is observed, and therefore the only place the
@@ -144,7 +172,7 @@ export async function POST(req: Request) {
                 break
             }
             case 'charge.refunded':
-                await refundTemplatePurchase(event.data.object)
+                await runEach([() => refundTemplatePurchase(event.data.object), () => refundCreditPurchase(event.data.object), () => refundLifetimePurchase(event.data.object)])
                 break
         }
         await markStripeEventProcessed(event.id)

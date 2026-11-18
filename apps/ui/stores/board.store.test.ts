@@ -250,6 +250,13 @@ describe('the board writes for a member who only uses the Box', () => {
         expect(db.fake.writes('agents').map(w => w.payload)).toEqual([{ col: 12, row: 3, space_id: 'managed' }])
     })
 
+    it('drops the rank a coworker had in the list when the board moves it to another Box', () => {
+        useBoardStore.setState(state => ({ agents: state.agents.map(a => (a.id === 'scout' ? { ...a, sidebarOrder: 2 } : a)) }))
+        useBoardStore.getState().moveAgent('scout', { col: 11, row: 4 }, 'managed', ADMIN)
+        expect(useBoardStore.getState().agents.find(a => a.id === 'scout')).toMatchObject({ spaceId: 'managed', sidebarOrder: null })
+        expect(db.fake.writes('agents').map(w => w.payload)).toEqual([{ col: 11, row: 4, space_id: 'managed', sidebar_order: null }])
+    })
+
     it('does not resize, move, rename or delete a Box they only use', async () => {
         const { renameSpaceAction, deleteSpaceAction } = await import('@/app/api/_actions/space.actions')
         const store = useBoardStore.getState()
@@ -447,5 +454,79 @@ describe('kickoff of a coworker created right after another one', () => {
         const selected = await replay
         expect(selected).toEqual({ agentId: 'tracker', sessionId: 'tracker-session' })
         expect(useBoardStore.getState().pendingOpenSession).toEqual({ agentId: 'tracker', sessionId: 'tracker-session', runId: 'tracker-run' })
+    })
+})
+
+describe('requestCreation', () => {
+    const scratch = { kind: 'scratch' as const, draft: { name: 'Scout', serviceSlugs: ['slack'], kickoff: 'Find leads' } }
+
+    it('queues a placement on the grid in the 3D view, creating nothing yet', () => {
+        useBoardStore.setState({ spaces: [space('s1', 0, 9)] })
+        useBoardStore.getState().requestCreation(scratch, ADMIN)
+        expect(useBoardStore.getState().placement).toMatchObject({ source: { kind: 'scratch' }, labels: ['Scout'] })
+        expect(actions.createAgentWithSetupAction).not.toHaveBeenCalled()
+    })
+
+    describe('in the Simple view', () => {
+        beforeEach(() => useBoardStore.getState().setCreationFrame('list'))
+
+        it('creates straight into the only Box, the server choosing the spot, and opens the coworker', async () => {
+            actions.createAgentWithSetupAction.mockResolvedValue({ ok: true, agentId: 'a1', active: true, checklist: [] })
+            useBoardStore.setState({ spaces: [space('s1', 0, 9)] })
+            useBoardStore.getState().requestCreation(scratch, ADMIN)
+            await vi.waitFor(() => expect(useBoardStore.getState().selectedAgentId).toBe('a1'))
+            expect(actions.createAgentWithSetupAction).toHaveBeenCalledWith(expect.objectContaining({ name: 'Scout', spaceId: 's1', col: undefined, row: undefined }))
+            expect(useBoardStore.getState().placement).toBeNull()
+        })
+
+        it('asks which Box when there are several, and creates in the one picked', async () => {
+            actions.installTemplateAction.mockResolvedValue({ ok: true, imported: 2, failed: [], agentIds: [] })
+            useBoardStore.setState({ spaces: [space('s1', 0, 9), space('s2', 10, 19)] })
+            const template = { kind: 'template' as const, slug: 'crm-kit', title: 'CRM kit', agentNames: ['Scout', 'Writer'] }
+            useBoardStore.getState().requestCreation(template, ADMIN)
+            expect(useBoardStore.getState().boxChoice).toEqual(template)
+            expect(actions.installTemplateAction).not.toHaveBeenCalled()
+
+            useBoardStore.getState().chooseBox('s2', ADMIN)
+            expect(useBoardStore.getState().boxChoice).toBeNull()
+            await vi.waitFor(() => expect(actions.installTemplateAction).toHaveBeenCalledWith({ slug: 'crm-kit', spaceId: 's2', positions: undefined, again: undefined }))
+        })
+
+        it('creates nothing when the choice is dismissed', () => {
+            useBoardStore.setState({ spaces: [space('s1', 0, 9), space('s2', 10, 19)] })
+            useBoardStore.getState().requestCreation(scratch, ADMIN)
+            useBoardStore.getState().chooseBox(null, ADMIN)
+            expect(useBoardStore.getState().boxChoice).toBeNull()
+            expect(actions.createAgentWithSetupAction).not.toHaveBeenCalled()
+        })
+
+        it('sends a coworker asked from a Box to it, and a copy to its original\'s Box', async () => {
+            actions.createAgentWithSetupAction.mockResolvedValue({ ok: true, agentId: 'a1', active: true, checklist: [] })
+            actions.duplicateAgentAction.mockResolvedValue({ ok: true, agentId: 'a2', agentName: 'Scout (copy)', inactive: false, schedules: [], triggers: [] })
+            useBoardStore.setState({ spaces: [space('s1', 0, 9), space('s2', 10, 19)] })
+            useBoardStore.getState().requestCreation({ ...scratch, spaceId: 's2' }, ADMIN)
+            useBoardStore.getState().requestCreation({ kind: 'duplicate', agentId: 'scout', agentName: 'Scout', spaceId: 's1' }, ADMIN)
+            expect(useBoardStore.getState().boxChoice).toBeNull()
+            await vi.waitFor(() => expect(actions.duplicateAgentAction).toHaveBeenCalledWith({ agentId: 'scout', spaceId: 's1', position: undefined }))
+            expect(actions.createAgentWithSetupAction).toHaveBeenCalledWith(expect.objectContaining({ spaceId: 's2' }))
+        })
+
+        it('counts only the Boxes a member manages, and refuses when there is none', async () => {
+            actions.installSharedAgentAction.mockResolvedValue({ ok: true, agentId: 'a3', inactive: false })
+            useBoardStore.setState({ spaces: [space('used', 0, 7), space('managed', 9, 16)], spaceGrants: [{ space_id: 'managed', user_id: 'member', access: 'manage' }] })
+            useBoardStore.getState().requestCreation({ kind: 'share', token: 'tok', agentName: 'Scout' }, MEMBER)
+            await vi.waitFor(() => expect(actions.installSharedAgentAction).toHaveBeenCalledWith({ token: 'tok', spaceId: 'managed', position: undefined }))
+
+            useBoardStore.setState({ spaceGrants: [] })
+            useBoardStore.getState().requestCreation({ kind: 'share', token: 'tok', agentName: 'Scout' }, { ...MEMBER, boxScope: 'assigned' })
+            expect(toast.error).toHaveBeenCalled()
+            expect(actions.installSharedAgentAction).toHaveBeenCalledTimes(1)
+        })
+
+        it('refuses a Box the caller only uses, even when asked for it', () => {
+            useBoardStore.setState({ spaces: [space('used', 0, 7)] })
+            useBoardStore.getState().requestCreation({ ...scratch, spaceId: 'used' }, MEMBER)
+            expect(actions.createAgentWithSetupAction).not.toHaveBeenCalled()
+        })
     })
 })

@@ -27,17 +27,17 @@ vi.mock('@/app/api/_auth/ownership', async importOriginal => {
     }
 })
 vi.mock('@/lib/i18n/recipient-locale', () => ({ recipientLocale: vi.fn(async () => 'en') }))
+// The plan read before a Claude sign-in is stored: a workspace on Rerun Cloud's plans, not a lifetime one.
+vi.mock('@/supabase/serviceRole', async () => {
+    const { fakeSupabase } = await import('@/test/supabase-fake')
+    return { createServiceRoleClient: () => fakeSupabase(table => (table === 'workspaces' ? { data: { plan: 'base' } } : undefined)).client }
+})
 vi.mock('@/app/api/_services/capacity.service', () => ({
     NoPlanError: class NoPlanError extends Error {
         constructor() {
             super('This workspace has no active plan.')
         }
     },
-}))
-const assertModelEntitled = vi.fn()
-vi.mock('@/app/api/_services/engine-plan.service', async importOriginal => ({
-    ModelNotEntitledError: (await importOriginal<typeof import('@/app/api/_services/engine-plan.service')>()).ModelNotEntitledError,
-    assertModelEntitled: (...args: unknown[]) => assertModelEntitled(...args),
 }))
 const conn = { baseUrl: 'https://engine.test', apiKey: 'box-key' }
 const findWorkspaceEngine = vi.fn()
@@ -134,7 +134,7 @@ beforeEach(() => {
 })
 
 describe('GET /api/v1/ai-connections', () => {
-    it('shapes the web dialog for the app: Rerun first, the default on Rerun when none is set, premium models locked on a trial', async () => {
+    it('shapes the web dialog for the app: Rerun first, the default on Rerun when none is set, premium models open on a trial', async () => {
         workspace.subscription_status = 'trialing'
         const view = await (await send(list.GET, 'GET')).json()
         workspace.subscription_status = 'active'
@@ -142,10 +142,24 @@ describe('GET /api/v1/ai-connections', () => {
         expect(view.default).toEqual({ connectionId: 'rerun', model: 'rerun-max', label: expect.any(String) })
         expect(view.connections[0]).toMatchObject({ kind: 'included', status: 'connected', isDefault: true, summary: "20% of this month's credits used" })
         const opus = view.connections[1].models.find((model: { id: string }) => model.id === 'claude-opus-5-5')
-        expect(opus).toMatchObject({ enabled: true, locked: true })
+        expect(opus).toMatchObject({ enabled: true, locked: false })
         expect(view.addable.map((entry: { provider: string }) => entry.provider)).toEqual(['claude', 'codex', 'anthropic', 'openai', 'google', 'openrouter'])
         expect(view.addable[0]).toMatchObject({ kind: 'plan', suggestedName: 'Claude 2', guide: null })
         expect(view.addable[2].guide).toMatchObject({ title: 'How to get your Anthropic key' })
+    })
+
+    it.each([
+        ['lifetime_restricted', ['codex', 'anthropic', 'openai', 'google', 'openrouter']],
+        ['lifetime', ['claude', 'codex', 'anthropic', 'openai', 'google', 'openrouter']],
+    ])('offers the Claude plan to a workspace on the %s plan only when it allows it', async (plan, providers) => {
+        const onPlan = workspace as typeof workspace & { plan?: string }
+        onPlan.plan = plan
+        try {
+            const view = await (await send(list.GET, 'GET')).json()
+            expect(view.addable.map((entry: { provider: string }) => entry.provider)).toEqual(providers)
+        } finally {
+            delete onPlan.plan
+        }
     })
 
     it('asks a signed-in user to reconnect a credential its provider turned away', async () => {
@@ -278,16 +292,11 @@ describe('POST /api/v1/ai-connections', () => {
 })
 
 describe('PUT /api/v1/ai-connections/default', () => {
-    it('sets the pair, clears it back to Rerun, and refuses a model the plan does not include', async () => {
+    it('sets the pair, and clears it back to Rerun', async () => {
         expect((await send(defaultRoute.PUT, 'PUT', '/default', { connectionId: 'cnx-claude', model: 'claude-sonnet-4-6' })).status).toBe(204)
         expect(engine.setBoxDefault).toHaveBeenLastCalledWith(conn, { connectionId: 'cnx-claude', model: 'claude-sonnet-4-6' })
         expect((await send(defaultRoute.PUT, 'PUT', '/default', { connectionId: null, model: null })).status).toBe(204)
         expect(engine.setBoxDefault).toHaveBeenLastCalledWith(conn, null)
-        const { ModelNotEntitledError } = await import('@/app/api/_services/engine-plan.service')
-        assertModelEntitled.mockRejectedValue(new ModelNotEntitledError('claude-opus-5-5'))
-        const refused = await send(defaultRoute.PUT, 'PUT', '/default', { connectionId: 'cnx-claude', model: 'claude-opus-5-5' })
-        expect(refused.status).toBe(403)
-        expect(await refused.json()).toEqual({ error: 'This model is not included in your plan.' })
     })
 })
 

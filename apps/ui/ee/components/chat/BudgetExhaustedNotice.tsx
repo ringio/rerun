@@ -12,7 +12,7 @@ import { ProviderIcon } from '@/lib/engine/provider-icons'
 import { useBillingStore } from '@/stores/billing.store'
 import { useWorkspaceSettingsStore } from '@/stores/workspace-settings.store'
 import { BorderBeam } from '@rerun/ui'
-import { ArrowRightIcon, CheckIcon, CoinsIcon, CreditCardIcon, LinkIcon, PauseIcon, Play, ZapOffIcon } from '@/lib/icons'
+import { ArrowRightIcon, CheckIcon, CoinsIcon, CreditCardIcon, KeyIcon, LinkIcon, PauseIcon, Play, ZapOffIcon } from '@/lib/icons'
 import { usd } from '@/ee/components/dialogs/billing/parts'
 import { BASE_PLAN_CREDITS, DEFAULT_PRICE_ARM, TRIAL_CREDITS, ZERO_QUANTITIES, creditsLabel, planPriceCents, type PriceArm } from '@/ee/lib/billing/plans'
 import { NOTICE_PERKS } from '@/ee/lib/billing/pro-perks'
@@ -40,8 +40,10 @@ type SubscriptionProvider = 'claude' | 'codex'
 // `noCredit` is a workspace that never had any Rerun credit, such as a workspace added before its
 // plan: nothing was used up, so the notice does not say it was.
 //
-// `lifetime` is a workspace on the lifetime plan (an AppSumo code): it has no Rerun credit by design
-// and nothing is sold to it, so its only way out is its own AI.
+// `lifetime` is a workspace on a lifetime plan (a lifetime code): it has no Rerun credit by design
+// and nothing is sold to it, so its only way out is its own AI, an API key first. The Claude plan is
+// offered only when `claudePlanOffered`: the restricted lifetime plan leaves it out, AppSumo refuses
+// to list it.
 //
 // On a trial, `coworker` names who stopped, `onPaid` hands the checkout a way to pick the task back
 // up, and `resuming` is the moment between paying and the plan landing, when the notice turns into
@@ -58,8 +60,9 @@ export function BudgetExhaustedNotice({
     paused,
     noCredit,
     lifetime,
+    claudePlanOffered,
     ...upgrade
-}: { onConnectProvider?: (provider: SubscriptionProvider) => void; ownConnection?: BudgetNoticeOwnConnection; preTrial?: boolean; trialing?: boolean; paused?: boolean; noCredit?: boolean; lifetime?: boolean } & TrialUpgrade) {
+}: { onConnectProvider?: (provider: SubscriptionProvider) => void; ownConnection?: BudgetNoticeOwnConnection; preTrial?: boolean; trialing?: boolean; paused?: boolean; noCredit?: boolean; lifetime?: boolean; claudePlanOffered?: boolean } & TrialUpgrade) {
     const t = useTranslations('chat.budget')
     const openBilling = useBillingStore(s => s.openBilling)
     const errorText = useErrorText()
@@ -96,7 +99,7 @@ export function BudgetExhaustedNotice({
         )
     }
 
-    if (lifetime) return <LifetimeNotice onConnectProvider={onConnectProvider} ownConnection={ownConnection} />
+    if (lifetime) return <LifetimeNotice onConnectProvider={onConnectProvider} ownConnection={ownConnection} claudePlanOffered={claudePlanOffered} />
 
     if (trialing && !noCredit) return <TrialUpgradeNotice {...upgrade} onConnectProvider={onConnectProvider} ownConnection={ownConnection} />
 
@@ -173,7 +176,7 @@ export function BudgetExhaustedNotice({
     )
 }
 
-function LifetimeNotice({ onConnectProvider, ownConnection }: { onConnectProvider?: (provider: SubscriptionProvider) => void; ownConnection?: BudgetNoticeOwnConnection }) {
+function LifetimeNotice({ onConnectProvider, ownConnection, claudePlanOffered }: { onConnectProvider?: (provider: SubscriptionProvider) => void; ownConnection?: BudgetNoticeOwnConnection; claudePlanOffered?: boolean }) {
     const t = useTranslations('chat.budget')
     const openAiProviders = useWorkspaceSettingsStore(s => s.openAiProviders)
 
@@ -194,22 +197,35 @@ function LifetimeNotice({ onConnectProvider, ownConnection }: { onConnectProvide
                 </>
             ) : onConnectProvider ? (
                 <>
-                    <p className="text-sm">{t('lifetime.connectProvider')}</p>
-                    <div className="grid grid-cols-2 gap-2">
-                        <Button size="sm" onClick={() => onConnectProvider('claude')}>
-                            <ProviderIcon provider="claude" className="size-3.5" />
-                            {t('connectProvider.claude')}
-                        </Button>
-                        <Button size="sm" onClick={() => onConnectProvider('codex')}>
+                    <p className="text-sm">{claudePlanOffered ? t('lifetime.connectProviderWithClaude') : t('lifetime.connectProvider')}</p>
+                    <NoticeActions actions={[{ key: 'api-key', leading: <Icon icon={KeyIcon} size="sm" />, title: t('lifetime.apiKeyTitle'), description: t('lifetime.apiKeyDescription'), cta: t('lifetime.apiKeyCta'), onClick: () => openAiProviders() }]} />
+                    <div className="flex items-center gap-2 text-xs uppercase">
+                        <span className="flex-1 border-t" />
+                        <span className="text-muted-foreground">{t('or')}</span>
+                        <span className="flex-1 border-t" />
+                    </div>
+                    {claudePlanOffered ? (
+                        <div className="grid grid-cols-2 gap-2">
+                            <Button size="sm" variant="outline" onClick={() => onConnectProvider('claude')}>
+                                <ProviderIcon provider="claude" className="size-3.5" />
+                                {t('connectProvider.claude')}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => onConnectProvider('codex')}>
+                                <ProviderIcon provider="openai" className="size-3.5" />
+                                {t('connectProvider.chatgpt')}
+                            </Button>
+                        </div>
+                    ) : (
+                        <Button size="sm" variant="outline" className="w-full" onClick={() => onConnectProvider('codex')}>
                             <ProviderIcon provider="openai" className="size-3.5" />
                             {t('connectProvider.chatgpt')}
                         </Button>
-                    </div>
+                    )}
                 </>
             ) : (
                 <>
                     <p className="text-sm">{t('lifetime.body')}</p>
-                    <NoticeActions actions={[{ key: 'connect', leading: <Icon icon={LinkIcon} size="sm" />, title: t('lifetime.connectTitle'), description: t('lifetime.connectDescription'), cta: t('lifetime.connectCta'), onClick: () => openAiProviders() }]} />
+                    <NoticeActions actions={[{ key: 'connect', leading: <Icon icon={LinkIcon} size="sm" />, title: t('lifetime.connectTitle'), description: claudePlanOffered ? t('lifetime.connectDescriptionWithClaude') : t('lifetime.connectDescription'), cta: t('lifetime.connectCta'), onClick: () => openAiProviders() }]} />
                 </>
             )}
         </div>
@@ -258,7 +274,7 @@ function TrialUpgradeNotice({ coworker, priceArm = DEFAULT_PRICE_ARM, onPaid, re
                 {NOTICE_PERKS.map(perk => (
                     <li key={perk.id} className="flex items-center gap-1.5 text-xs">
                         <CheckIcon className="size-3.5 shrink-0 text-green-500" />
-                        {tPerks(perk.id as 'credits' | 'models' | 'coworkers', { credits: BASE_PLAN_CREDITS })}
+                        {tPerks(perk.id as 'credits' | 'coworkers' | 'team', { credits: BASE_PLAN_CREDITS })}
                     </li>
                 ))}
             </ul>

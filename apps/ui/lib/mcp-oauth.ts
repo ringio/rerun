@@ -30,10 +30,12 @@ export type OAuthContext = {
     clientId: string
     clientSecret?: string
     redirectUri: string
-    scope?: string
     // Started from the iOS app: the callback redirects back into it instead of answering with the
     // popup page, and reads the workspace from this signed grant since that browser has no session.
     mobileGrant?: string
+    // Started from the workspace's Vault, for an entry no coworker may hold yet: the token goes to the
+    // entry, in the workspace named here, and `agentId` is empty.
+    vault?: { itemId: string; workspaceId: number }
 }
 
 export type DiscoveredMetadata = {
@@ -288,7 +290,8 @@ export function buildAuthorizeUrl(metadata: DiscoveredMetadata, ctx: OAuthContex
         code_challenge_method: 'S256',
         resource: ctx.mcpUrl,
     })
-    if (ctx.scope) params.set('scope', ctx.scope)
+    const scope = metadata.scopesSupported?.join(' ')
+    if (scope) params.set('scope', scope)
     return `${metadata.authorizationEndpoint}?${params.toString()}`
 }
 
@@ -324,12 +327,8 @@ export async function exchangeCode(ctx: OAuthContext, code: string): Promise<Exc
     }
 }
 
-// `scope` is only needed for the authorize URL, already built when the cookie is written. Kept in,
-// a provider advertising many scopes (PostHog: 240) pushes the cookie past the browser's 4 KB limit,
-// the browser drops it and the callback answers "Session expired".
 export function encodeContext(ctx: OAuthContext): string {
-    const { scope: _authorizeOnly, ...cookieContext } = ctx
-    return sealContext(cookieContext)
+    return sealContext(ctx)
 }
 
 export function decodeContext(raw: string): OAuthContext {

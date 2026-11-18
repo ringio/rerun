@@ -114,19 +114,18 @@
         },
         "credit": {
             "addedTitle": "Guthaben hinzugefügt",
-            "addedBody": "Du bekommst jetzt jeden Monat {count, plural, one {# Credit} other {# Credits}}. Deine Coworker machen dort weiter, wo sie aufgehört haben.",
-            "unchangedBody": "Dein Guthaben bleibt bis zu deiner Verlängerung unverändert.",
-            "title": "Rerun-Guthaben hinzufügen",
-            "eachPack": "Jedes Paket fügt jeden Monat {count, plural, one {# Credit} other {# Credits}} hinzu, für {price}.",
+            "addedBody": "{count, plural, one {# Credit ist} other {# Credits sind}} in deinem Workspace. Sie verfallen nie, und deine Coworker machen dort weiter, wo sie aufgehört haben.",
+            "title": "Rerun-Guthaben kaufen",
+            "eachPack": "Jedes Paket fügt {count, plural, one {# Credit} other {# Credits}} für {price} hinzu, einmal bezahlt. Sie verfallen nie.",
             "packs": "{count, plural, one {# Paket} other {# Pakete}}",
-            "perMonth": "+{count, plural, one {# Credit} other {# Credits}} pro Monat",
+            "packCredits": "{count, plural, one {# Credit} other {# Credits}}, verfallen nie",
             "lessAria": "Ein Paket weniger",
             "moreAria": "Ein Paket mehr",
-            "then": "Danach",
-            "add": "Guthaben hinzufügen",
-            "pickPacks": "Wähle eine Anzahl Pakete",
-            "removeAtRenewal": "Bei Verlängerung entfernen",
-            "chargedNow": "Jetzt berechnet, anteilig bis zu deiner Verlängerung."
+            "dueBeforeTax": "Heute fällig, zzgl. Steuern",
+            "buy": "Guthaben kaufen",
+            "payOnStripe": "Bei Stripe bezahlen",
+            "chargedOnce": "Einmalig von dieser Karte abgebucht.",
+            "checkoutFootnote": "Du bezahlst auf einer sicheren Stripe-Seite und kommst dann hierher zurück."
         }
     },
     "apps": {
@@ -376,8 +375,6 @@
                 "bodyNoCoworker": "Dein Coworker ist bereit, die Aufgabe wieder aufzunehmen. Deine Quittung kommt per E-Mail.",
                 "credits": "Guthaben",
                 "creditsValue": "{credits, plural, one {# Credit} other {# Credits}} pro Monat",
-                "models": "Modelle",
-                "modelsValue": "Alle Premium-Modelle",
                 "coworkers": "Coworker",
                 "coworkersValue": "Unbegrenzt",
                 "resume": "Aufgabe fortsetzen"
@@ -453,7 +450,7 @@
             "autopilot": "<b>Autopilot</b> für dein Business",
             "trial": {
                 "agents": "<b>{count} Coworker</b> in der Testphase, unbegrenzt mit Pro",
-                "teammates": "Lade <b>dein Team</b> ein, sobald Pro beginnt",
+                "teammates": "Lade <b>dein Team</b> vom ersten Tag an ein",
                 "credit": "<b>{credits, plural, one {# Credit} other {# Credits}} für KI-Nutzung</b>, danach {monthly, number} pro Monat"
             },
             "pro": {
@@ -498,11 +495,6 @@
                 "trial": "{credits, plural, one {# Credit} other {# Credits}}, einmalig",
                 "pro": "{credits, plural, one {# Credit} other {# Credits}} jeden Monat"
             },
-            "models": {
-                "title": "Modelle",
-                "trial": "Leichtere Modelle",
-                "pro": "Alle Premium-Modelle freigeschaltet"
-            },
             "coworkers": {
                 "title": "Coworker",
                 "trial": "{count} aktiv",
@@ -512,17 +504,12 @@
                 "title": "Teammitglieder",
                 "trial": "Nur du",
                 "pro": "Lade dein ganzes Team ein"
-            },
-            "topup": {
-                "title": "Aufladungen",
-                "trial": "Nicht verfügbar",
-                "pro": "+{credits, plural, one {# Credit} other {# Credits}}, wenn du sie brauchst"
             }
         },
         "headlines": {
             "credits": "{credits, plural, one {# Credit/Monat} other {# Credits/Monat}}",
-            "models": "Premium-Modelle",
-            "coworkers": "Unbegrenzte Coworker"
+            "coworkers": "Unbegrenzte Coworker",
+            "team": "Lade dein Team ein"
         }
     },
     "cancel": {

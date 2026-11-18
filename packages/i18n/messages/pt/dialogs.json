@@ -173,20 +173,6 @@
             }
         }
     },
-    "auth": {
-        "welcome": {
-            "title": "Boas-vindas ao Rerun",
-            "subtitle": "Crie sua conta para começar a montar sua equipe de coworkers."
-        },
-        "build": {
-            "title": "Sua equipe está pronta para ser montada",
-            "subtitle": "Crie sua conta e o Chief of Staff começa a montá-la na hora."
-        },
-        "signin": {
-            "title": "Boas-vindas",
-            "subtitle": "Entre ou crie sua conta para começar."
-        }
-    },
     "phoneVerification": {
         "title": "Uma última etapa",
         "subtitle": "Adicione seu número de telefone."
@@ -341,9 +327,7 @@
         "title": "Adicionar este coworker",
         "description": "Veja o que este coworker faz e depois coloque-o no seu quadro.",
         "sentBy": "{name} enviou para você uma cópia deste coworker. Ele vai rodar na sua própria Box.",
-        "sentBySomeone": "Alguém enviou para você uma cópia deste coworker. Ele vai rodar na sua própria Box.",
-        "signUp": "Cadastre-se para adicionar este coworker",
-        "waiting": "Ele vai estar esperando por você logo em seguida."
+        "sentBySomeone": "Alguém enviou para você uma cópia deste coworker. Ele vai rodar na sua própria Box."
     },
     "templateDeepLink": {
         "unavailable": "Este link de template não está mais disponível",
@@ -586,7 +570,8 @@
     },
     "paidApp": {
         "slotAdded": "Vaga adicionada ao seu plano.",
-        "slotAddedTrial": "Vaga adicionada, {price} durante o seu teste."
+        "slotAddedTrial": "Vaga adicionada, {price} durante o seu teste.",
+        "slotRemoved": "Vaga devolvida. Ela continua utilizável até a sua próxima renovação."
     },
     "linkedinPro": {
         "description": "As contas do LinkedIn com que seus coworkers atuam.",
@@ -620,6 +605,7 @@
     },
     "subscriptionOffer": {
         "title": "Rode seus coworkers no seu plano do Claude ou do ChatGPT",
+        "titleWithoutClaude": "Rode seus coworkers no seu plano do ChatGPT ou com uma chave de API",
         "back": "Voltar",
         "connect": "Conectar",
         "or": "ou",
@@ -634,7 +620,9 @@
         },
         "offer": {
             "title": "O Rerun funciona melhor com sua assinatura do Claude ou do ChatGPT",
-            "description": "Conecte-a e seus coworkers rodam no plano que você já paga."
+            "description": "Conecte-a e seus coworkers rodam no plano que você já paga.",
+            "titleWithoutClaude": "Seus coworkers rodam na sua própria IA",
+            "descriptionWithoutClaude": "Conecte seu plano do ChatGPT ou uma chave de API, e seus coworkers rodam nele."
         },
         "arguments": {
             "ownPlan": {
@@ -684,5 +672,10 @@
             "keyDetail": "Seus coworkers agora rodam nesta chave.",
             "done": "Concluído"
         }
+    },
+    "boxPicker": {
+        "title": "Escolha uma Box",
+        "description": "O novo coworker entra nela, em um lugar livre.",
+        "coworkers": "{count, plural, =0 {Nenhum coworker ainda} one {# coworker} other {# coworkers}}"
     }
 }

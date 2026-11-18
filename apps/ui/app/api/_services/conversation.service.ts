@@ -2,13 +2,14 @@ import { actorFromContext, assertAgentAccess, assertSessionInWorkspace, keepVisi
 import { AuthorizationError, type WorkspaceContext } from '@/app/api/_auth/ownership'
 import { createSessionRow, getSessionEngineContext, lastRunError, listSessionRuns, readUsageSeed, resolveAgentTarget, type SessionUsageSeed, updateSessionStatus } from '@/app/api/_services/chat.service'
 import { type HistoryMessage, transformEngineMessages } from '@/lib/chat/engine-history'
+import { openSkillProposal, pendingRequestPeek, type PendingRequestPeek } from '@/lib/chat/pending-request-peek'
 import { recipientLocale } from '@/lib/i18n/recipient-locale'
 import { translatorFor } from '@/lib/i18n/server-translator'
 import { ATTENTION_NOTIFICATION_COLUMNS, attentionDetailsOf, attentionNotificationsFilter } from '@/lib/notifications/attention-details'
 import { sanitizeIlike } from '@/lib/search/ilike'
 import { cancelRun, getSession, getSessionMessages, listRuns, listSessions, listSkillProposals } from '@/lib/engine/client'
 import type { EngineSkillProposal, SessionSource } from '@/lib/engine/types'
-import { ATTENTION_STATUSES, needsHuman, sessionStatusSchema, type AgentConversationsOverview, type Conversation, type ConversationHit, type SessionKind, type SessionOutcome, type SessionStatus, type ToHandleList } from '@rerun/contracts'
+import { ATTENTION_STATUSES, CONVERSATION_TITLE_MAX, needsHuman, sessionStatusSchema, type AgentConversationsOverview, type Conversation, type ConversationHit, type SessionKind, type SessionOutcome, type SessionStatus, type ToHandleList } from '@rerun/contracts'
 import type { Database } from '@/app/api/database.types'
 import { createClient } from '@/supabase/server'
 import { createServiceRoleClient } from '@/supabase/serviceRole'
@@ -312,6 +313,16 @@ export async function markSessionsHandled(ctx: WorkspaceContext, sessionIds: str
     await update
 }
 
+// The name a person gives a conversation, shared by everyone who reaches it. General keeps its
+// fixed name: the `kind` filter leaves its row untouched, and no row written means nothing renamed.
+export async function renameSession(sessionId: string, title: string): Promise<boolean> {
+    const name = title.trim().slice(0, CONVERSATION_TITLE_MAX)
+    if (!name) return false
+    const session = await assertSessionInWorkspace(sessionId)
+    const { data } = await createServiceRoleClient().from('sessions').update<Database['public']['Tables']['sessions']['Update']>({ title: name }).eq('id', session.id).eq('kind', 'thread').select('id')
+    return !!data?.length
+}
+
 // Creates the Supabase mirror row for an engine-only session so it can be
 // opened and continued like a regular session. Idempotent per engine session.
 export async function adoptEngineSession(agentId: string, engineSessionId: string, title: string, actor?: Actor): Promise<string> {
@@ -343,6 +354,16 @@ export async function readSessionMessages(sessionId: string): Promise<HistoryMes
 
     const messages = await getSessionMessages(ctx.conn, ctx.engineAgentId, ctx.engineSessionId)
     return transformEngineMessages(messages)
+}
+
+// What the conversation waits on, read the way the chat would read it when opened. Without its
+// proposals, the request is still worth showing.
+export async function readPendingRequest(sessionId: string): Promise<PendingRequestPeek> {
+    const ctx = await getSessionEngineContext(sessionId)
+    if (!ctx || !ctx.engineSessionId) return pendingRequestPeek([])
+    const { conn, engineAgentId, engineSessionId } = ctx
+    const [messages, proposals] = await Promise.all([getSessionMessages(conn, engineAgentId, engineSessionId).then(transformEngineMessages), listSkillProposals(conn, engineAgentId, engineSessionId).catch(() => [])])
+    return pendingRequestPeek(messages, openSkillProposal(proposals))
 }
 
 export type SessionSnapshot = {
@@ -385,7 +406,11 @@ export async function cancelSessionRuns(sessionId: string): Promise<void> {
     await Promise.all(running.map(r => cancelRun(ctx.conn, ctx.engineAgentId, r.id).catch(() => {})))
 }
 
-export async function finalizeSession(sessionId: string, status: 'idle' | 'error'): Promise<void> {
+// `onlyWhileWorking` is the reconnection's safety net: the engine's notification already settles a run's
+// end (`done` to idle, a card to `awaiting_*`), so that write may only catch a session left `working`
+// and never move one that waits on an answer. A stop or a closed card passes no option.
+export async function finalizeSession(sessionId: string, status: 'idle' | 'error', options?: { onlyWhileWorking?: boolean }): Promise<void> {
     await assertSessionInWorkspace(sessionId)
-    await updateSessionStatus(sessionId, status)
+    if (!options?.onlyWhileWorking) return updateSessionStatus(sessionId, status)
+    await createServiceRoleClient().from('sessions').update<Database['public']['Tables']['sessions']['Update']>({ status }).eq('id', sessionId).eq('status', 'working')
 }

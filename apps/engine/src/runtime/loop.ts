@@ -1,4 +1,4 @@
-import { streamText, type LanguageModelUsage, type ModelMessage, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
+import { streamText, wrapLanguageModel, type LanguageModelUsage, type ModelMessage, type StreamTextResult, type ToolSet, type UIMessageStreamWriter } from 'ai'
 import { RERUN_CONNECTION_ID, contextTextPart, type ContextOccupancy, type MessageAuthor } from '@rerun/contracts'
 import { applyCaching, withTailBreakpoint } from '../agents/caching.js'
 import { mergeProviderOptions, reasoningProviderOptions } from '../agents/reasoning.js'
@@ -34,6 +34,8 @@ import { newId, nowIso } from '../lib/ids.js'
 import { buildTools } from '../tools/registry.js'
 import { callTargetsOf } from '../tools/builtin/call-agent.js'
 import { toolPayloadChars } from '../tools/payload.js'
+import { sentToolNames } from '../tools/mcp-search.js'
+import { mcpWireMiddleware } from '../tools/mcp-wire.js'
 import { prepareMcpServer } from '../tools/mcp.js'
 import { withPooledRelays } from '../tools/mcp-relay.js'
 import { HostBreaker } from '../tools/host-breaker.js'
@@ -45,8 +47,9 @@ import { repairToolCall } from './tool-repair.js'
 import { stepWithScreenshots } from './screenshots.js'
 import { authorMetadata, sendNotification, type NotificationKind } from './notify.js'
 import { emitRunTerminal } from './run-events.js'
-import { ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, errorMessageOf, isFailedFinish, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, unreachableEndpointError, type RunErrorCode } from './provider-errors.js'
+import { ClaudeSignInRenewedError, classifyFinishReason, classifyProviderError, errorMessageOf, isFailedFinish, openAiCreditsError, ProviderRefusedError, ProviderStreamCutError, RUN_ERROR_CODES, refusalReason, unreachableEndpointError, type RunErrorCode } from './provider-errors.js'
 import { armBudgetLatch, clearBudgetLatch, RERUN_BUDGET_ERROR_CODE } from './budget-latch.js'
+import { agentMcpServers } from '../vault/runtime.js'
 
 export type RunOutcome = { kind: 'done' | 'error' | 'cancelled'; error?: string; errorCode?: RunErrorCode | null }
 
@@ -254,16 +257,17 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         if (provider === 'opencode') void refreshOpencodePlanLimits(connection)
     }
 
-    const closeSafely = async (): Promise<void> => {
+    const closeSafely = async (): Promise<boolean> => {
         let timer: ReturnType<typeof setTimeout> | undefined
-        const guard = new Promise<void>(resolve => {
+        const guard = new Promise<false>(resolve => {
             timer = setTimeout(() => {
                 logger.warn({ agent: agent.id, run: run.id, provider }, 'run teardown timed out')
-                resolve()
+                resolve(false)
             }, CLOSE_TIMEOUT_MS)
         })
-        await Promise.race([close().catch(() => {}), guard])
+        const closedInTime = await Promise.race([close().then(() => true, () => true), guard])
         if (timer) clearTimeout(timer)
+        return closedInTime
     }
 
     let settled = false
@@ -322,6 +326,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             if (settlement.errorCode === RUN_ERROR_CODES.refused) settlement = { ...settlement, error: new ProviderRefusedError(refusalReason(settlement.error)) }
             const unreachable = provider === 'custom' ? unreachableEndpointError(connection?.config.baseUrl, settlement.error) : null
             if (unreachable) settlement = { ...settlement, error: unreachable }
+            const outOfCredits = settlement.errorCode === RUN_ERROR_CODES.usageLimit ? openAiCreditsError(provider, settlement.error) : null
+            if (outOfCredits) settlement = { ...settlement, error: outOfCredits }
             const errorCode = settlement.errorCode ?? null
             const errorMessage = errorMessageOf(settlement.error)
             forgetCodexThread(agent.id, sessionId)
@@ -349,7 +355,8 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         // Codex only writes its rotated token to auth.json once the CLI has exited, so the next run
         // must not be able to start before this returns. Capped rather than awaited outright: a
         // teardown that hangs used to be enough to keep the whole conversation busy forever.
-        await closeSafely()
+        // An app-server still up holds its thread's writer lock: resuming it would be refused.
+        if (!(await closeSafely()) && provider === 'codex') forgetCodexThread(agent.id, sessionId)
         void cliAuthP?.then(release => release(), () => {})
         // Last, not first: freeing the session claim before the transcript is written and before
         // the provider is down let a second send in on a history missing this turn.
@@ -425,7 +432,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             ctx.callTargets = callTargets
             return buildTools(ctx)
         })
-        const preparedP = CLI_PROVIDERS.has(provider) ? Promise.all(agent.config.mcpServers.map(s => prepareMcpServer(agent.id, s, agent.env))) : Promise.resolve([])
+        const preparedP = CLI_PROVIDERS.has(provider) ? Promise.all(agentMcpServers(agent).map(s => prepareMcpServer(agent.id, s, agent.env, agent.hubAgentId))) : Promise.resolve([])
         // Claude reaches its servers through the engine's connections; Codex starts its own without
         // holding up the model, so it keeps dialing them as declared.
         const mcpServersP = provider === 'claude' ? preparedP.then(servers => withPooledRelays(agent, servers)) : preparedP
@@ -433,18 +440,28 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
 
         void setAgentStatus(agent.id, 'busy').catch(err => logger.warn({ err: String(err), agent: agent.id }, 'setAgentStatus busy failed'))
 
-        const system = await buildSystemPrompt(agent, trigger, provider, order)
+        const system = await buildSystemPrompt(
+            agent,
+            trigger,
+            provider,
+            order,
+            toolsP.then(built => built.heldBackMcp),
+        )
         const systemText = systemPromptText(system)
 
         const pastAuthorIds = await listSessionAuthorIds(agent.id, sessionId).catch(() => [])
         const shared = isSharedConversation(author ? [...pastAuthorIds, author.id] : pastAuthorIds)
 
         // The tools come first: their schemas ride along on every step, so the compaction threshold
-        // has to count them with the history.
+        // has to count them with the history. The MCP tools held back are not sent, so not counted.
         const built = await toolsP
         closeTools = built.close
-        const { tools } = built
-        const history = repairToolPairs(await prepareRunHistory(ctx, systemText, override, shared, toolPayloadChars(tools)))
+        const { tools, heldBackMcp } = built
+        // The same list on every step and every message: a list that moved would move the start of
+        // the prompt, and the provider would read the whole conversation again outside its cache.
+        const sentNames = heldBackMcp ? sentToolNames(tools, heldBackMcp) : undefined
+        const sentTools = sentNames ? Object.fromEntries(sentNames.map(name => [name, tools[name]])) : tools
+        const history = repairToolPairs(await prepareRunHistory(ctx, systemText, override, shared, toolPayloadChars(sentTools)))
 
         const [memories, mcpServers] = await Promise.all([memoriesP, mcpServersP, cliAuthP])
         const recall = recallSection(memories, history)
@@ -475,7 +492,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
         contextUsage = resolvedModel.contextUsage
         // Cut out of the text whoever wrote it; only a coworker that offers replies gets the buttons.
         if (offersQuickReplies(agent.config)) quickReplies = resolvedModel.quickReplies
-        const languageModel = resolvedModel.model
+        const languageModel = heldBackMcp ? wrapLanguageModel({ model: resolvedModel.model, middleware: mcpWireMiddleware(heldBackMcp) }) : resolvedModel.model
 
         let lastStepAt = Date.now()
         let runCostMicros: number | null = null
@@ -485,6 +502,7 @@ async function runTurn(baseAgent: LoadedAgent, sessionId: string, userText: stri
             messages: cached.messages,
             providerOptions: mergeProviderOptions(mergeProviderOptions(cached.providerOptions, reasoningProviderOptions(provider, model)), resumeThreadId ? { 'codex-app-server': { threadId: resumeThreadId } } : undefined),
             tools,
+            activeTools: sentNames,
             abortSignal: controller.signal,
             experimental_repairToolCall: repairToolCall,
             stopWhen: ({ steps }) => hitlTurnIsOver(steps, CLI_PROVIDERS.has(provider)),

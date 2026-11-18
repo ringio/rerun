@@ -18,7 +18,6 @@ import type { ContextOccupancy, McpServer, Provider } from '@rerun/contracts'
 import { env } from '../config/env.js'
 import { codexPath } from '../runtime/codex-cli.js'
 import { codexHomeDir } from '../config/paths.js'
-import { allowedModel } from '../connections/plan.js'
 import { CONNECTION_TOKEN_KEY, RERUN_CONNECTION_ID } from '@rerun/contracts'
 import { childProcessEnv, envOverlay } from '../lib/child-env.js'
 import { newId } from '../lib/ids.js'
@@ -116,7 +115,12 @@ export const CODEX_HARNESS_OVERRIDES: CodexConfigOverrides = {
     'features.goals': false,
     'features.tool_suggest': false,
     'features.hooks': false,
-    'features.code_mode': false,
+    // `features.code_mode` is a table as well as a switch. The model catalog OpenAI serves sets
+    // tool_mode code_mode_only on every Codex model, and that beats the switch: the bridged tools
+    // then only exist inside exec, and the model answers that it cannot create coworkers. The
+    // namespace list keeps the rerun tools direct model tools (read back against 0.166).
+    'features.code_mode.enabled': false,
+    'features.code_mode.direct_only_tool_namespaces': [`mcp__${BRIDGE_SERVER_NAME}`],
     // Running a command is shell_exec, the Rerun tool. These two close Codex's own shell whole:
     // with them the model answers that it has no way to run a command.
     'features.shell_tool': false,
@@ -436,7 +440,7 @@ export type ModelOverride = { connectionId?: string; provider?: Provider; model?
 // what a caller with no override of its own (compaction, curator, vision, memory reconcile) means.
 function pairFor(agent: LoadedAgent, override?: ModelOverride): { provider: Provider; model: string } {
     const provider = agent.resolved.provider
-    return { provider, model: allowedModel(provider, override?.model ?? agent.resolved.model) }
+    return { provider, model: override?.model ?? agent.resolved.model }
 }
 
 // For one-shot calls with no tools. Codex resolves to the exec transport here, which spawns per call
@@ -455,7 +459,7 @@ export function modelFor(agent: LoadedAgent, override?: ModelOverride, tools?: T
 // a claude run captured via its Stop hook — the cumulative usage the provider reports at finish
 // counts cache reads once per internal turn and says nothing about how full the window is.
 // `quickReplies` reads the block the model closed its message with, cut out of the text on its way.
-export type ResolvedModel = { model: LanguageModel; close: () => Promise<void>; contextUsage?: () => ContextOccupancy | undefined; quickReplies: () => QuickRepliesCapture | undefined }
+export type ResolvedModel = { model: ReturnType<typeof wrapLanguageModel>; close: () => Promise<void>; contextUsage?: () => ContextOccupancy | undefined; quickReplies: () => QuickRepliesCapture | undefined }
 
 const noClose = async (): Promise<void> => {}
 

@@ -106,6 +106,7 @@ export type Database = {
           id: string
           name: string
           row: number
+          sidebar_order: number | null
           space_id: string
           status: Database["public"]["Enums"]["agent_status"]
           template_id: string | null
@@ -123,6 +124,7 @@ export type Database = {
           id?: string
           name: string
           row?: number
+          sidebar_order?: number | null
           space_id: string
           status?: Database["public"]["Enums"]["agent_status"]
           template_id?: string | null
@@ -140,6 +142,7 @@ export type Database = {
           id?: string
           name?: string
           row?: number
+          sidebar_order?: number | null
           space_id?: string
           status?: Database["public"]["Enums"]["agent_status"]
           template_id?: string | null
@@ -640,6 +643,33 @@ export type Database = {
           },
         ]
       }
+      desktop_auth_codes: {
+        Row: {
+          code_challenge: string
+          code_hash: string
+          created_at: string
+          expires_at: string
+          used_at: string | null
+          user_id: string
+        }
+        Insert: {
+          code_challenge: string
+          code_hash: string
+          created_at?: string
+          expires_at: string
+          used_at?: string | null
+          user_id: string
+        }
+        Update: {
+          code_challenge?: string
+          code_hash?: string
+          created_at?: string
+          expires_at?: string
+          used_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       device_tokens: {
         Row: {
           app_version: string | null
@@ -696,6 +726,8 @@ export type Database = {
           active_runs: number | null
           box_name: string
           cpu_cores: number | null
+          disk_total_mb: number | null
+          disk_used_mb: number | null
           engine_ok: boolean
           host_id: string
           rss_mb: number | null
@@ -706,6 +738,8 @@ export type Database = {
           active_runs?: number | null
           box_name: string
           cpu_cores?: number | null
+          disk_total_mb?: number | null
+          disk_used_mb?: number | null
           engine_ok: boolean
           host_id: string
           rss_mb?: number | null
@@ -716,6 +750,8 @@ export type Database = {
           active_runs?: number | null
           box_name?: string
           cpu_cores?: number | null
+          disk_total_mb?: number | null
+          disk_used_mb?: number | null
           engine_ok?: boolean
           host_id?: string
           rss_mb?: number | null
@@ -1170,8 +1206,11 @@ export type Database = {
           backend: string
           created_at: string
           engine_session_id: string | null
+          first_message: string | null
           id: string
+          kind: Database["public"]["Enums"]["session_kind"]
           messages: Json
+          status: Database["public"]["Enums"]["session_status"]
           title: string | null
           updated_at: string
           user_id: string
@@ -1181,8 +1220,11 @@ export type Database = {
           backend?: string
           created_at?: string
           engine_session_id?: string | null
+          first_message?: string | null
           id?: string
+          kind?: Database["public"]["Enums"]["session_kind"]
           messages?: Json
+          status?: Database["public"]["Enums"]["session_status"]
           title?: string | null
           updated_at?: string
           user_id: string
@@ -1192,8 +1234,11 @@ export type Database = {
           backend?: string
           created_at?: string
           engine_session_id?: string | null
+          first_message?: string | null
           id?: string
+          kind?: Database["public"]["Enums"]["session_kind"]
           messages?: Json
+          status?: Database["public"]["Enums"]["session_status"]
           title?: string | null
           updated_at?: string
           user_id?: string
@@ -2078,6 +2123,44 @@ export type Database = {
         }
         Relationships: []
       }
+      rerun_credit_purchases: {
+        Row: {
+          created_at: string
+          id: string
+          micros: number
+          packs: number
+          refunded_micros: number
+          stripe_ref: string
+          workspace_id: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          micros: number
+          packs: number
+          refunded_micros?: number
+          stripe_ref: string
+          workspace_id: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          micros?: number
+          packs?: number
+          refunded_micros?: number
+          stripe_ref?: string
+          workspace_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rerun_credit_purchases_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rerun_usage_events: {
         Row: {
           billed: boolean
@@ -2287,6 +2370,10 @@ export type Database = {
           first_message: string | null
           id: string
           kind: Database["public"]["Enums"]["session_kind"]
+          last_message: string | null
+          last_message_at: string | null
+          last_message_author_id: string | null
+          last_message_from: string | null
           origin_agent_id: string | null
           outcome: Database["public"]["Enums"]["session_outcome"] | null
           source: Database["public"]["Enums"]["session_source"]
@@ -2302,6 +2389,10 @@ export type Database = {
           first_message?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["session_kind"]
+          last_message?: string | null
+          last_message_at?: string | null
+          last_message_author_id?: string | null
+          last_message_from?: string | null
           origin_agent_id?: string | null
           outcome?: Database["public"]["Enums"]["session_outcome"] | null
           source?: Database["public"]["Enums"]["session_source"]
@@ -2317,6 +2408,10 @@ export type Database = {
           first_message?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["session_kind"]
+          last_message?: string | null
+          last_message_at?: string | null
+          last_message_author_id?: string | null
+          last_message_from?: string | null
           origin_agent_id?: string | null
           outcome?: Database["public"]["Enums"]["session_outcome"] | null
           source?: Database["public"]["Enums"]["session_source"]
@@ -2330,6 +2425,13 @@ export type Database = {
             columns: ["agent_id"]
             isOneToOne: false
             referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_last_message_author_id_fkey"
+            columns: ["last_message_author_id"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
           {
@@ -2435,6 +2537,7 @@ export type Database = {
           name: string | null
           row_end: number
           row_start: number
+          sidebar_order: number | null
           visibility: string
           workspace_id: number
         }
@@ -2446,6 +2549,7 @@ export type Database = {
           name?: string | null
           row_end: number
           row_start: number
+          sidebar_order?: number | null
           visibility?: string
           workspace_id: number
         }
@@ -2457,6 +2561,7 @@ export type Database = {
           name?: string | null
           row_end?: number
           row_start?: number
+          sidebar_order?: number | null
           visibility?: string
           workspace_id?: number
         }
@@ -3516,73 +3621,9 @@ export type Database = {
           },
         ]
       }
-      workspace_rewind_views: {
-        Row: {
-          rewind_id: string
-          user_id: string
-          viewed_at: string
-        }
-        Insert: {
-          rewind_id: string
-          user_id: string
-          viewed_at?: string
-        }
-        Update: {
-          rewind_id?: string
-          user_id?: string
-          viewed_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "workspace_rewind_views_rewind_id_fkey"
-            columns: ["rewind_id"]
-            isOneToOne: false
-            referencedRelation: "workspace_rewinds"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "workspace_rewind_views_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      workspace_rewinds: {
-        Row: {
-          created_at: string
-          id: string
-          payload: Json
-          week_start: string
-          workspace_id: number
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          payload: Json
-          week_start: string
-          workspace_id: number
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          payload?: Json
-          week_start?: string
-          workspace_id?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "workspace_rewinds_workspace_id_fkey"
-            columns: ["workspace_id"]
-            isOneToOne: false
-            referencedRelation: "workspaces"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       workspaces: {
         Row: {
+          addons_current_period_end: string | null
           boxes_archived_at: string | null
           boxes_deleted_at: string | null
           boxes_disabled_at: string | null
@@ -3611,6 +3652,7 @@ export type Database = {
           rerun_period_anchor: string | null
           rerun_topup_micros: number
           rerun_used_micros: number
+          stripe_addons_subscription_id: string | null
           stripe_customer_id: string | null
           stripe_price_id: string | null
           stripe_subscription_id: string | null
@@ -3621,6 +3663,7 @@ export type Database = {
           waitlisted_at: string | null
         }
         Insert: {
+          addons_current_period_end?: string | null
           boxes_archived_at?: string | null
           boxes_deleted_at?: string | null
           boxes_disabled_at?: string | null
@@ -3649,6 +3692,7 @@ export type Database = {
           rerun_period_anchor?: string | null
           rerun_topup_micros?: number
           rerun_used_micros?: number
+          stripe_addons_subscription_id?: string | null
           stripe_customer_id?: string | null
           stripe_price_id?: string | null
           stripe_subscription_id?: string | null
@@ -3659,6 +3703,7 @@ export type Database = {
           waitlisted_at?: string | null
         }
         Update: {
+          addons_current_period_end?: string | null
           boxes_archived_at?: string | null
           boxes_deleted_at?: string | null
           boxes_disabled_at?: string | null
@@ -3687,6 +3732,7 @@ export type Database = {
           rerun_period_anchor?: string | null
           rerun_topup_micros?: number
           rerun_used_micros?: number
+          stripe_addons_subscription_id?: string | null
           stripe_customer_id?: string | null
           stripe_price_id?: string | null
           stripe_subscription_id?: string | null
@@ -3770,9 +3816,33 @@ export type Database = {
         Args: { p_micros: number; p_workspace_id: number }
         Returns: undefined
       }
+      coworker_previews: {
+        Args: { p_workspace_id: number }
+        Returns: {
+          agent_id: string
+          last_message: string | null
+          last_message_at: string | null
+          last_message_author_id: string | null
+          last_message_from: string | null
+          session_id: string | null
+          status: Database["public"]["Enums"]["session_status"] | null
+          title: string | null
+          updated_at: string | null
+        }[]
+      }
       current_admin_workspace_ids: { Args: never; Returns: number[] }
       current_workspace_ids: { Args: never; Returns: number[] }
       email_domain_is_blocked: { Args: { p_email: string }; Returns: boolean }
+      engine_box_disk_latest: {
+        Args: never
+        Returns: {
+          box_name: string
+          disk_total_mb: number
+          disk_used_mb: number
+          host_id: string
+          sampled_at: string
+        }[]
+      }
       engine_box_metric_series: {
         Args: {
           p_bucket: string
@@ -3791,6 +3861,15 @@ export type Database = {
           host_id: string
           points: Json
         }[]
+      }
+      grant_rerun_credit_purchase: {
+        Args: {
+          p_micros: number
+          p_packs: number
+          p_stripe_ref: string
+          p_workspace_id: number
+        }
+        Returns: boolean
       }
       grant_rerun_topup: {
         Args: { p_micros: number; p_workspace_id: number }
@@ -3840,6 +3919,10 @@ export type Database = {
       resolve_notification_incidents: {
         Args: { p_source_key: string }
         Returns: string[]
+      }
+      revoke_rerun_credit_purchase: {
+        Args: { p_refunded_micros: number; p_stripe_ref: string }
+        Returns: number
       }
       touch_sandbox_activity: { Args: { p_user_id: string }; Returns: undefined }
       unseen_runs: {

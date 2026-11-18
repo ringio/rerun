@@ -2,13 +2,11 @@
 
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { track } from '@rerun/analytics/client'
-import { FOREMAN_AGENT_ID } from '@rerun/contracts'
+import { FOREMAN_AGENT_ID, MAX_UPLOAD_FILE_BYTES } from '@rerun/contracts'
 import { cancelSubRunAction } from '@/app/api/_actions/agent.actions'
 import { readFileAction } from '@/app/api/_actions/file.actions'
 import { readWorkspaceFileAction } from '@/app/api/_actions/workspace-file.actions'
 import { foremanEngineFilesAction, readForemanFileAction } from '@/app/api/_actions/foreman-file.actions'
-import { decideIndustryAction, saveForemanIntakeAction } from '@/app/api/_actions/foreman-intake.actions'
-import { streamLiveDiscoveries } from '@/components/builder/discoveries/useCompanyDiscoveries'
 import type { ChatComposerHandle } from '@/components/chat/ChatComposer'
 import { MessageFeedbackDialog } from '@/components/chat/MessageFeedbackDialog'
 import { ArrivalHeader, type ArrivalPick } from '@/components/foreman/arrival/ArrivalHeader'
@@ -16,15 +14,22 @@ import { ArrivalWall } from '@/components/foreman/arrival/ArrivalWall'
 import { arrivalStepOf } from '@/components/foreman/arrival/flow'
 import { ForemanChatLayer } from '@/components/foreman/ForemanChatLayer'
 import { ForemanHeader } from '@/components/foreman/ForemanHeader'
+import { ForemanHistory } from '@/components/foreman/ForemanHistory'
+import { ForemanTopBar } from '@/components/foreman/ForemanTopBar'
+import { ForemanDetails } from '@/components/foreman/ForemanDetails'
+import { DetailsColumn } from '@/components/workspace-view/DetailsColumn'
+import { DetailsToggle } from '@/components/workspace-view/DetailsToggle'
+import { useDetailsOpen } from '@/components/workspace-view/useDetailsOpen'
 import { ForemanComposerSlot } from '@/components/foreman/ForemanComposerSlot'
 import { ForemanDockResizeHandle } from '@/components/foreman/ForemanDockResizeHandle'
 import { ForemanResizeHandle } from '@/components/foreman/ForemanResizeHandle'
 import { ForemanRoutines } from '@/components/foreman/ForemanRoutines'
+import { useForemanThreads } from '@/components/foreman/useForemanThreads'
+import { threadStateOf } from '@/components/agent/sheet/ThreadBranch'
 import { FLOAT_CORNER_CLASSES, FLOAT_SIZE_CLASSES, floatSizeStyle } from '@/components/foreman/placement-classes'
 import { useForemanDrag } from '@/components/foreman/useForemanDrag'
 import { useForemanChat } from '@/components/foreman/useForemanChat'
 import { useForemanDockFeed } from '@/components/foreman/useForemanDockFeed'
-import { useForemanIntake } from '@/components/foreman/intake/useForemanIntake'
 import { readPlan } from '@/components/foreman/widgets/plan-card'
 import { useForemanFunnelAnalytics } from '@/components/foreman/useForemanFunnelAnalytics'
 import { useForemanKickoff } from '@/components/foreman/useForemanKickoff'
@@ -32,6 +37,7 @@ import { useForemanScriptedSteps } from '@/components/foreman/useForemanScripted
 import { useForemanSheetHeight } from '@/components/foreman/useForemanSheetHeight'
 import { useForemanSheetResize } from '@/components/foreman/useForemanSheetResize'
 import { useForemanTurnNotification } from '@/components/foreman/useForemanTurnNotification'
+import { PanelSteps } from '@/components/ui/panel-steps'
 import { useMessageFeedback } from '@/hooks/useMessageFeedback'
 import { useQueuedMessage } from '@/hooks/useQueuedMessage'
 import { isSubscriptionEntitled } from '@rerun/cloud/billing'
@@ -39,19 +45,20 @@ import { classifyChatError, unwrapChatError } from '@/lib/chat-error'
 import { cn } from '@/lib/utils'
 import { shouldFlush } from '@/lib/chat/queued-message'
 import { foremanNextSteps, trialStep } from '@/lib/foreman/next-steps'
+import { KICKOFF_MARKER } from '@/lib/foreman/kickoff-marker'
 import { keepsComposer } from '@/lib/foreman/pending-widget'
 import { SHOW_STARTER_PACK_TOOL } from '@/lib/foreman/starter-pack'
 import { lastShownPlan, lastShownStarterPlan, lastShownTemplatePlan } from '@/lib/foreman/shown-plan'
 import { agentFileRawUrl, foremanFileRawUrl, sharedFileRawUrl } from '@/lib/files/raw-url'
 import { type ForemanPlacement, dockedForemanSide } from '@/lib/foreman-layout'
 import { browserPermission } from '@/lib/notifications/browser'
-import { intakePreviewPlan, type ForemanIntake } from '@/lib/onboarding/intake'
+import { useHoldAppBoot } from '@/stores/app-boot.store'
 import { useBoardCoverStore } from '@/stores/board-cover.store'
-import { useForemanStore } from '@/stores/foreman.store'
+import { selectForemanInThread, useForemanStore } from '@/stores/foreman.store'
 import { useTemplateFlowStore } from '@/stores/template-flow.store'
 import { templateCardImage } from '@/lib/templates/card-image'
 import { useNotificationsStore } from '@/stores/notifications.store'
-import { useOnboardingStore } from '@/stores/onboarding.store'
+import { useSimpleDetailsStore } from '@/stores/simple-details.store'
 import { useSession } from '@/supabase/session/SessionProvider'
 import { useTranslations } from 'next-intl'
 
@@ -60,17 +67,17 @@ const TRANSITION_MS = 300
 // `open` vaut `null` tant que la préférence n'est pas tranchée, le temps de l'hydratation : la piste
 // de grille s'ouvre quand même (le défaut desktop), mais le panneau reste hors de la tabulation, au
 // cas où l'écran serait un téléphone — là le calque est translaté hors champ.
-export function ForemanColumn({ open, placement }: { open: boolean | null; placement: ForemanPlacement }) {
+// `pinned`: in the Simple view's middle, where it is neither dragged, nor floated, nor resized.
+export function ForemanColumn({ open, placement, pinned = false }: { open: boolean | null; placement: ForemanPlacement; pinned?: boolean }) {
     const sessionId = useForemanStore(state => state.sessionId)
     const guided = useForemanStore(state => state.funnel === 'guided')
     // Le tunnel guidé n'affiche pas de tabs : un onglet resté ouvert avant ne doit pas y cacher le chat.
-    const onRoutines = useForemanStore(state => state.tab === 'routines') && !guided
-    const intakeOpen = useForemanStore(state => state.intake)
-    const { isAnonymous, workspace, phoneStep } = useSession()
-    const pendingIntake = useOnboardingStore(state => state.pendingIntake)
-    const gated = isAnonymous && pendingIntake !== null && !intakeOpen
-    const { messages, sendMessage, status, error, stop, stopping, regenerate, answerWidget, dismissWidget, pendingWidget, restoreDone, composerBackend, backend, contextStats, runError, reconnecting, activeRunId } = useForemanChat()
+    // In the Simple view's middle the routines are in the panel beside the chat, not in a tab over it.
+    const onRoutines = useForemanStore(state => state.tab === 'routines') && !guided && !pinned
+    const { workspace, phoneStep } = useSession()
+    const { messages, sendMessage, status, error, stop, stopping, regenerate, retryLastTurn, answerWidget, dismissWidget, pendingWidget, restoreDone, composerBackend, backend, contextStats, runError, reconnecting, activeRunId } = useForemanChat()
     const busy = status === 'submitted' || status === 'streaming' || reconnecting
+    useHoldAppBoot(open !== false && !guided && !restoreDone)
 
     // Ce que le board dessine à gauche pendant tout le tunnel. L'organisation vit dans le transcript
     // et non dans un state à nous, donc elle survit à « Looks good », au checkout et au rechargement.
@@ -91,7 +98,32 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
         useForemanStore.getState().newChat()
         composerRef.current?.focus()
     }, [])
+
+    // General carries its threads as branches; a thread slides over it, and the crumb brings it back.
+    const tThreads = useTranslations('foreman.threads')
+    const surface = useForemanStore(state => state.surface)
+    const inThread = useForemanStore(selectForemanInThread) && !guided
+    const hasThreads = surface === 'engine' && !guided
+    const { threads, entries: threadEntries } = useForemanThreads(open === true && hasThreads)
+    const threadWaiting = useMemo(() => threads.some(thread => threadStateOf(thread.status) === 'needs'), [threads])
+    const [historyOpen, setHistoryOpen] = useState(false)
+    const openThread = useCallback((id: string) => useForemanStore.getState().openThread(id), [])
+    const backToGeneral = useCallback(() => useForemanStore.getState().showGeneral(), [])
+    const threadOnScreen = useMemo(() => {
+        if (!inThread) return null
+        const row = threads.find(thread => thread.id === sessionId)
+        return { title: row?.title ?? tThreads('untitled'), status: row?.status ?? null }
+    }, [inThread, threads, sessionId, tThreads])
     const [uploading, setUploading] = useState(false)
+    // Where a coworker's chat names who it is talking to, or the thread it answers in.
+    const tAgent = useTranslations('agent.agentSheetChat')
+    const tView = useTranslations('workspaceView.foreman')
+    const tDetails = useTranslations('workspaceView.details')
+    const detailsShown = useDetailsOpen() && pinned && open === true
+    // Mounted the first time it opens, then kept: opening it again only slides it in.
+    const [details, setDetails] = useState({ mounted: false, slideIn: false })
+    if (detailsShown && !details.mounted) setDetails({ mounted: true, slideIn: restoreDone })
+    const framedPlaceholder = !pinned ? undefined : threadOnScreen && threadOnScreen.title !== tThreads('untitled') ? tAgent('replyPlaceholder', { title: threadOnScreen.title }) : tAgent('messagePlaceholder', { name: tView('name') })
 
     // The kickoff marker goes through here too, and the store turns it away like every message of
     // the funnel: the browser notification permission is only asked once the onboarding is over.
@@ -121,73 +153,26 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
         composerRef.current?.restore(text)
         composerRef.current?.focus()
     }, [])
-    // Un nouvel arrivant n'a rien à taper : le Foreman ouvre sa colonne et parle le premier. Sauf en
-    // découverte, où c'est la carte d'accueil qui tient l'écran et `start` qui attend qu'elle ait
-    // fini.
-    const { start, firstName, arrival, prompted } = useForemanKickoff({ send, messageCount: messages.length, restoreDone })
+    // Un nouvel arrivant n'a rien à taper : le Foreman ouvre sa colonne et parle le premier.
+    const { arrival } = useForemanKickoff({ send, messageCount: messages.length, restoreDone })
 
-    // La carte écrit le profil elle-même, donc quand elle rend la main la phase est déjà `plan` : le
-    // kickoff fait monter le starter pack de leur industrie, sans un tour de modèle. Arrivé sur un
-    // template ou un partage, c'est la carte du lien qui monte à sa place.
-    //
-    // Un anonyme n'écrit rien : ses réponses sont parquées, la carte se ferme et c'est un bouton de
-    // création de compte qui prend la place du composer. Le kickoff les écrit une fois le compte créé.
-    const intakeHandlers = useMemo(
-        () => ({
-            onDecideIndustry: (input: string) => decideIndustryAction(input),
-            onAnalyzeSite: (url: string) => void streamLiveDiscoveries(url).then(ok => track('onboarding_company_analyzed', { ok })),
-            onSubmit: async (intake: ForemanIntake, ownAsk?: string) => {
-                const industry = intake.industry ?? intake.decidedIndustry
-                track('onboarding_website_submitted', industry ? { provided: !!intake.companyUrl, industry } : { provided: !!intake.companyUrl })
-                track('onboarding_step_completed', { step: 'discover' })
-                if (isAnonymous) {
-                    useOnboardingStore.getState().setPendingIntake(intake, ownAsk)
-                    useForemanStore.getState().closeIntake()
-                    return
-                }
-                // The full read of the site can file them under another industry than the one the
-                // board has been drawing, and the plan lays out the Boxes of the stored one.
-                const saved = await saveForemanIntakeAction(intake).catch(err => {
-                    // The composer already let go of the line: it goes back where they wrote it.
-                    if (ownAsk) composerRef.current?.restore(ownAsk)
-                    throw err
-                })
-                useForemanStore.getState().setIntakePreview(intakePreviewPlan(saved.industry))
-                useForemanStore.getState().closeIntake()
-                track('onboarding_step_viewed', { step: 'plan' })
-                // A line written under the card is the plan: the funnel counts it off the kickoff that
-                // carries it (useForemanFunnelAnalytics), as it counts a line written over the pack.
-                start(ownAsk)
-            },
-        }),
-        [isAnonymous, start]
-    )
-    const intake = useForemanIntake({ firstName, handlers: intakeHandlers })
-
-    // Le composer reste sous la carte d'accueil et sous le starter pack : ce qui s'y écrit est le
-    // coworker qu'ils veulent. Sous la carte il coupe court aux questions, sous le pack il y répond
-    // comme une carte choisie. Pas sous la carte d'un lien : ils sont venus pour ce qu'il installe.
-    // Ni sous celle d'un prompt écrit sur la landing : ils l'ont déjà dit, la ligne l'écraserait.
+    // Le composer reste sous le starter pack : ce qui s'y écrit est le coworker qu'ils veulent, et il
+    // y répond comme une carte choisie.
     const packPending = pendingWidget?.toolName === SHOW_STARTER_PACK_TOOL ? pendingWidget : null
-    const ownEntry = (intakeOpen && !arrival && !prompted) || !!packPending
+    const ownEntry = !!packPending
     const sendFromComposer = useCallback(
         (text: string) => {
-            if (intakeOpen) {
-                // The field is already empty when a line is refused (a first one still saving).
-                if (!intake.sendOwn(text)) composerRef.current?.restore(text)
-                return
-            }
             if (packPending) return answerWidget(packPending.toolName, packPending.toolCallId, { answered: true, custom: text.trim() })
             sendOrQueue(text)
         },
-        [intakeOpen, intake, packPending, answerWidget, sendOrQueue]
+        [packPending, answerWidget, sendOrQueue]
     )
 
     // Arrived on a template or a shared coworker: until it is installed the column is its tunnel.
     // The account and the phone code take the whole of it, the rest is the conversation itself,
     // where the trial, the purchase and the build already live.
-    const arrivalStep = guided && arrival && !arrival.installed ? arrivalStepOf({ isAnonymous, phonePending: phoneStep === 'pending', messages }) : null
-    const arrivalWall = arrivalStep === 'account' || arrivalStep === 'phone' ? arrivalStep : null
+    const arrivalStep = guided && arrival && !arrival.installed ? arrivalStepOf({ phonePending: phoneStep === 'pending', messages }) : null
+    const arrivalWall = arrivalStep === 'phone'
     const linkTemplate = useTemplateFlowStore(state => state.linkTemplate)
     const arrivalPick = useMemo<ArrivalPick | null>(() => {
         if (!arrival) return null
@@ -215,12 +200,21 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
         if (send(pendingPrompt)) useForemanStore.getState().clearPendingPrompt()
     }, [pendingPrompt, restoreDone, busy, companion, send])
 
+    // The welcome page just handed over: the Chief of Staff of the engine speaks first, once. The
+    // engine route spends the turn it owes, so a second tab or a reload sends nothing more.
+    const greetPending = useForemanStore(state => state.greetPending)
+    useEffect(() => {
+        if (!greetPending || !companion || surface !== 'engine' || !restoreDone || busy || messages.length > 0) return
+        if (send(KICKOFF_MARKER)) useForemanStore.getState().setGreetPending(false)
+    }, [greetPending, companion, surface, restoreDone, busy, messages.length, send])
+
     // Sur le hub, couper le flux suffit : la boucle meurt avec lui. Sur l'engine, `stop` annule aussi
     // le run là-bas.
     const handleStop = useCallback(() => void stop(), [stop])
 
     const displayedError = runError || error ? unwrapChatError(runError ?? error?.message) : null
     const noticeError = useMemo(() => (displayedError === null ? null : { kind: classifyChatError(displayedError), message: displayedError }), [displayedError])
+    const canRetry = backend === 'engine' && !busy && messages.some(message => message.role === 'user')
     useForemanDockFeed({ messages, busy, open: open === true, pending: pendingWidget, failed: displayedError !== null })
 
     // ⌘K lands in whichever composer is on screen: this one once the column is open, the pill's
@@ -304,7 +298,6 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
     // Les fichiers du Foreman ne vivent pas sur une Box : les vignettes, la lightbox et la lecture
     // du vocal passent par le seau du hub, sous la clé de cette conversation.
     // On the engine they live in the foreman's own workspace there, once the engine can take them.
-    const surface = useForemanStore(state => state.surface)
     const [filesOnEngine, setFilesOnEngine] = useState(false)
     useEffect(() => {
         if (!open || surface !== 'engine') return
@@ -320,6 +313,9 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
     const rawUrlFor = useCallback((path: string) => (engineFiles ? agentFileRawUrl(FOREMAN_AGENT_ID, path) : foremanFileRawUrl(sessionId, path)), [engineFiles, sessionId])
     const readFile = useCallback((path: string) => (engineFiles ? readFileAction(FOREMAN_AGENT_ID, path) : readForemanFileAction(sessionId, path)), [engineFiles, sessionId])
     const sharedFiles = useMemo(() => (engineFiles ? { rawUrlFor: sharedFileRawUrl, readFile: readWorkspaceFileAction } : undefined), [engineFiles])
+    // A file joined to an engine question has to land where the foreman's tools can open it, which is
+    // its own workspace on the Box. Until the engine can take them, the question carries no paperclip.
+    const answerAttachments = useMemo(() => (engineFiles ? { target: { kind: 'agent', agentId: FOREMAN_AGENT_ID } as const, maxFileSize: MAX_UPLOAD_FILE_BYTES } : null), [engineFiles])
 
     const stopTask = useMemo(() => (activeRunId ? (taskId: string) => void cancelSubRunAction(FOREMAN_AGENT_ID, activeRunId, taskId) : undefined), [activeRunId])
 
@@ -342,9 +338,9 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
     const handleHeaderPointerDown = useCallback(
         (event: PointerEvent<HTMLElement>) => {
             onSheetPointerDown(event)
-            onHeaderPointerDown(event)
+            if (!pinned) onHeaderPointerDown(event)
         },
-        [onSheetPointerDown, onHeaderPointerDown]
+        [onSheetPointerDown, onHeaderPointerDown, pinned]
     )
 
     // Redimensionner la piste de grille redimensionne le layer GPU du board à chaque frame : on le
@@ -426,73 +422,110 @@ export function ForemanColumn({ open, placement }: { open: boolean | null; place
             <div
                 className={cn(
                     'absolute inset-y-0 flex w-full flex-col bg-background pb-[var(--consent-inset)]',
+                    pinned && 'md:flex-row',
                     floating
                         ? 'right-0 md:inset-x-0 md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-2xl'
-                        : cn(
-                              'md:w-[calc(var(--foreman-dock-track)-8px)] md:overflow-hidden md:rounded-3xl md:border md:border-border md:shadow',
-                              dockSide === 'left' ? 'left-0' : 'right-0'
-                          )
+                        : pinned
+                          ? // The rest of the card the list sits on, as a coworker's chat is: the list's edge is the line between them.
+                            'right-0 [--chat-column:48rem] md:w-(--foreman-dock-track) md:overflow-hidden md:rounded-r-3xl md:border md:border-l-0 md:border-border md:shadow'
+                          : cn(
+                                'md:w-[calc(var(--foreman-dock-track)-8px)] md:overflow-hidden md:rounded-3xl md:border md:border-border md:shadow',
+                                dockSide === 'left' ? 'left-0' : 'right-0'
+                            )
                 )}
             >
-                <ForemanHeader placement={placement} onDragPointerDown={handleHeaderPointerDown} onToggleSheetDetent={toggleDetent} onNewChat={startNewChat} />
-                {/* Masqués et pas démontés hors de l'onglet Assistant : un aller-retour sur Routines
-                    ne doit perdre ni le brouillon du composer ni la position dans la conversation. */}
-                {arrivalStep && arrivalPick && (
-                    <div className={cn('flex flex-col gap-6 px-5 pt-14', arrivalWall ? 'min-h-0 flex-1 overflow-y-auto pb-5' : 'shrink-0')}>
-                        <ArrivalHeader pick={arrivalPick} step={arrivalStep} paid={!!arrival?.paid || arrivalStep === 'purchase'} />
-                        {arrivalWall && <ArrivalWall step={arrivalWall} />}
+                {/* In the Simple view's middle its column sits beside the chat, as a coworker's card does. */}
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                    {pinned ? (
+                        <ForemanTopBar
+                            thread={threadOnScreen && { id: sessionId, ...threadOnScreen }}
+                            onShowGeneral={backToGeneral}
+                            onNewTask={startNewChat}
+                            end={<DetailsToggle label={tView('card')} />}
+                            history={hasThreads && <ForemanHistory inBar open={historyOpen} onOpenChange={setHistoryOpen} waiting={threadWaiting} entries={threadEntries} activeThreadId={inThread ? sessionId : null} onOpenGeneral={backToGeneral} onOpenThread={openThread} onNewTask={startNewChat} />}
+                        />
+                    ) : (
+                        <ForemanHeader
+                            placement={placement}
+                            onDragPointerDown={handleHeaderPointerDown}
+                            onToggleSheetDetent={toggleDetent}
+                            onNewChat={startNewChat}
+                            thread={threadOnScreen}
+                            onBackToGeneral={backToGeneral}
+                            history={hasThreads && <ForemanHistory open={historyOpen} onOpenChange={setHistoryOpen} waiting={threadWaiting} entries={threadEntries} activeThreadId={inThread ? sessionId : null} onOpenGeneral={backToGeneral} onOpenThread={openThread} onNewTask={startNewChat} />}
+                        />
+                    )}
+                    {/* Masqués et pas démontés hors de l'onglet Assistant : un aller-retour sur Routines
+                        ne doit perdre ni le brouillon du composer ni la position dans la conversation. */}
+                    {arrivalStep && arrivalPick && (
+                        <div className={cn('flex flex-col gap-6 px-5 pt-14', arrivalWall ? 'min-h-0 flex-1 overflow-y-auto pb-5' : 'shrink-0')}>
+                            <ArrivalHeader pick={arrivalPick} step={arrivalStep} paid={!!arrival?.paid || arrivalStep === 'purchase'} />
+                            {arrivalWall && <ArrivalWall />}
+                        </div>
+                    )}
+                    <div className={onRoutines || arrivalWall ? 'hidden' : 'contents'}>
+                        {/* General keeps one key whatever id it gets from the server: only a thread slides. */}
+                        <PanelSteps stepKey={inThread ? sessionId : 'general'} depth={inThread ? 1 : 0}>
+                            <ForemanChatLayer
+                                orbPaused={!open}
+                                messages={messages}
+                                streaming={busy}
+                                guided={guided}
+                                restored={restoreDone}
+                                error={noticeError}
+                                onWidgetAnswer={answerWidget}
+                                onWidgetDismiss={dismissWidget}
+                                pending={pendingWidget}
+                                answerAttachments={answerAttachments}
+                                nextSteps={nextSteps}
+                                onSuggestion={sendOrQueue}
+                                onPrefill={prefill}
+                                onStop={handleStop}
+                                onRetry={canRetry ? retryLastTurn : undefined}
+                                onStopTask={stopTask}
+                                actions={messageActions}
+                                rawUrlFor={rawUrlFor}
+                                readFile={readFile}
+                                sharedFiles={sharedFiles}
+                                threads={inThread || !hasThreads ? undefined : threads}
+                                onOpenThread={openThread}
+                                underCrumb={inThread}
+                                framed={pinned}
+                                onStackElement={setStackEl}
+                                className="min-h-0 flex-1"
+                            />
+                        </PanelSteps>
+                        <ForemanComposerSlot
+                            ref={setSlotEl}
+                            framed={pinned}
+                            placeholder={framedPlaceholder}
+                            trialGate={trialGate}
+                            aside={!!pendingWidget && !keepsComposer(pendingWidget)}
+                            ownEntry={ownEntry}
+                            composerRef={composerRef}
+                            sessionId={sessionId}
+                            backend={composerBackend}
+                            status={status}
+                            busy={busy}
+                            queue={queue}
+                            onSend={sendFromComposer}
+                            onStop={handleStop}
+                            onUploadingChange={setUploading}
+                            filesOnEngine={filesOnEngine}
+                            contextStats={contextStats}
+                        />
                     </div>
-                )}
-                <div className={onRoutines || arrivalWall ? 'hidden' : 'contents'}>
-                    <ForemanChatLayer
-                        messages={messages}
-                        streaming={busy}
-                        guided={guided}
-                        intake={intakeOpen ? intake : null}
-                        gated={gated}
-                        arrival={arrival}
-                        restored={restoreDone}
-                        error={noticeError}
-                        onWidgetAnswer={answerWidget}
-                        onWidgetDismiss={dismissWidget}
-                        pending={pendingWidget}
-                        nextSteps={nextSteps}
-                        onSuggestion={sendOrQueue}
-                        onPrefill={prefill}
-                        onStop={handleStop}
-                        onStopTask={stopTask}
-                        actions={messageActions}
-                        rawUrlFor={rawUrlFor}
-                        readFile={readFile}
-                        sharedFiles={sharedFiles}
-                        onStackElement={setStackEl}
-                        className="min-h-0 flex-1"
-                    />
-                    <ForemanComposerSlot
-                        ref={setSlotEl}
-                        intake={intakeOpen ? intake : null}
-                        gated={gated}
-                        trialGate={trialGate}
-                        aside={!!pendingWidget && !keepsComposer(pendingWidget)}
-                        ownEntry={ownEntry}
-                        composerRef={composerRef}
-                        sessionId={sessionId}
-                        backend={composerBackend}
-                        status={status}
-                        busy={busy}
-                        queue={queue}
-                        onSend={sendFromComposer}
-                        onStop={handleStop}
-                        onUploadingChange={setUploading}
-                        filesOnEngine={filesOnEngine}
-                        contextStats={contextStats}
-                    />
+                    <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
+                    {onRoutines && <ForemanRoutines docked={placement.mode === 'dock'} className="min-h-0 flex-1 pt-24" />}
                 </div>
-                <MessageFeedbackDialog open={feedback.dialogOpen} rating={feedback.dialogRating} onOpenChange={feedback.onDialogOpenChange} onSubmit={feedback.submitDetails} />
-                {onRoutines && <ForemanRoutines docked={placement.mode === 'dock'} className="min-h-0 flex-1 pt-24" />}
+                {pinned && details.mounted && (
+                    <DetailsColumn label={tDetails('label', { name: tView('name') })} open={detailsShown} slideIn={details.slideIn} onClose={() => useSimpleDetailsStore.getState().setWanted(false)}>
+                        <ForemanDetails shown={detailsShown} onClose={() => useSimpleDetailsStore.getState().setWanted(false)} />
+                    </DetailsColumn>
+                )}
             </div>
-            {placement.mode === 'float' && !dragging && open && <ForemanResizeHandle panelRef={panelRef} placement={placement} />}
-            {placement.mode === 'dock' && !dragging && open && <ForemanDockResizeHandle panelRef={panelRef} placement={placement} />}
+            {placement.mode === 'float' && !dragging && open && !pinned && <ForemanResizeHandle panelRef={panelRef} placement={placement} />}
+            {placement.mode === 'dock' && !dragging && open && !pinned && <ForemanDockResizeHandle panelRef={panelRef} placement={placement} />}
         </div>
     )
 }

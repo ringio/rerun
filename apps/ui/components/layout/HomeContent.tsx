@@ -1,31 +1,36 @@
 'use client'
 
 import { confirmTemplatePurchaseAction } from '@rerun/cloud/marketplace.client'
-import { AppLoader } from '@/components/layout/AppLoader'
-import { AuthDialog } from '@/components/dialogs/AuthDialog'
 import { EngineWaitlistDialog } from '@/components/dialogs/EngineWaitlistDialog'
 import { BuilderView } from '@/components/builder/BuilderView'
+import { AgentPanel } from '@/components/agent/AgentPanel'
+import { SimplePhoneHome } from '@/components/workspace-view/SimplePhoneHome'
+import { SimpleWorkspace } from '@/components/workspace-view/SimpleWorkspace'
+import { useWorkspaceView } from '@/components/workspace-view/WorkspaceViewProvider'
+import { FOREMAN_COLUMN_QUERY } from '@/lib/foreman-open'
+import { useResolvedIsMobile } from '@rerun/ui/primitives'
 import { ForemanDock } from '@/components/foreman/ForemanDock'
-import { useRewindEnabled } from '@/components/layout/FeatureFlagsProvider'
 import { PhoneVerificationDialog } from '@rerun/cloud/phone.client'
 import { PostPaymentDialog, TemplatePurchaseSuccessDialog } from '@rerun/cloud/billing.client'
 import { AgentShareDeepLinkDialog } from '@/components/dialogs/AgentShareDeepLinkDialog'
 import { TemplateDeepLinkDialog } from '@/components/dialogs/TemplateDeepLinkDialog'
 import { WorkspacePausedBanner } from '@/components/layout/WorkspacePausedBanner'
+import { WorkspaceDialogs } from '@/components/layout/WorkspaceDialogs'
 import { WorkspaceSwitcher } from '@/components/layout/WorkspaceSwitcher'
 import { ChangelogDialog } from '@/components/changelog/ChangelogDialog'
 import { ControlCenter } from '@/components/control-center/ControlCenter'
-import { RewindViewer, useRewindLauncher, useRewindStore } from '@rerun/cloud/rewind.client'
 import { useChangelogLauncher } from '@/components/changelog/useChangelogLauncher'
 import { useEnsureSandboxSpace } from '@/lib/sandbox/useEnsureSandboxSpace'
 import { useAgentHealthSync } from '@/hooks/useAgentHealthSync'
 import { useAgentSchedulesSync } from '@/hooks/useAgentSchedulesSync'
+import { useCoworkerPreviewsSync } from '@/hooks/useCoworkerPreviewsSync'
 import { useNotificationsRealtime } from '@/hooks/useNotificationsRealtime'
 import { useSessionsRealtime } from '@/hooks/useSessionsRealtime'
 import { useSpaceAccessSync } from '@/hooks/useSpaceAccessSync'
 import { useSpacesRealtime } from '@/hooks/useSpacesRealtime'
 import { useUnseenRunsSync } from '@/hooks/useUnseenRunsSync'
 import { useAccountStore } from '@/stores/account.store'
+import { useAppBootStore } from '@/stores/app-boot.store'
 import { useBillingStore } from '@/stores/billing.store'
 import { useBoardStore } from '@/stores/board.store'
 import { useCreatorStore } from '@/stores/creator.store'
@@ -35,7 +40,10 @@ import { hasPendingStart, useOnboardingStore } from '@/stores/onboarding.store'
 import { useAgentShareStore } from '@/stores/agent-share.store'
 import { useTemplateFlowStore } from '@/stores/template-flow.store'
 import { selectForemanVisible, useForemanStore } from '@/stores/foreman.store'
-import { useResumePendingStart } from '@/lib/onboarding/useResumePendingStart'
+import { clearSearchParams } from '@/lib/clear-search-params'
+import { settleSlotsCheckoutAction } from '@/app/api/_actions/apps.actions'
+import { PAID_APP_PARAM, SLOTS_CHECKOUT_PARAM, isAppSlug } from '@/lib/apps/types'
+import { usePaidAppsStore } from '@rerun/cloud/apps.client'
 import { openConversationFromNotification } from '@/lib/notifications/open-conversation'
 import { createClient } from '@/supabase/client'
 import { selectMaybeSingle } from '@/supabase/supabase-helpers'
@@ -44,26 +52,14 @@ import { useSearchParams } from 'next/navigation'
 import { WORKSPACE_PARAM } from '@/lib/workspace/workspace-header'
 import { useEffect, useRef, useState } from 'react'
 import { ACCOUNT_LINK_ERROR_PARAM, ACCOUNT_LINK_PROVIDER_PARAM, ACCOUNT_PARAM, linkErrorMessage } from '@/lib/auth/link-intent'
-import { OAUTH_PROVIDER_CONFIG, isOAuthProvider, type OAuthProvider } from '@/lib/auth/oauth-providers'
-import { oauthErrorCode, oauthRetryCopy, withoutOAuthError } from '@/lib/auth/oauth-error'
-import { oauthProviderLeftFor } from '@/lib/auth/oauth-sign-in'
+import { isOAuthProvider } from '@/lib/auth/oauth-providers'
+import { oauthErrorCode, withoutOAuthError } from '@/lib/auth/oauth-error'
 import { toast } from 'sonner'
 import { useTranslations } from 'next-intl'
-import { track } from '@rerun/analytics/client'
 
 // Durée minimale d'affichage du loader : le temps que le R se trace (45% d'un
 // cycle de 2.8s) pour que l'animation soit perceptible et pas un simple flash.
 const MIN_LOADER_MS = 1300
-
-// `history.replaceState` plutôt que `router.replace` : Next le synchronise avec `useSearchParams`
-// sans repasser par le serveur, donc pas de re-render de la page dynamique (fallback du Suspense
-// qui reflashe) ni de navigation qu'une réponse de server action peut recouvrir.
-function clearSearchParams(...keys: string[]) {
-    const url = new URL(window.location.href)
-    if (!keys.some(key => url.searchParams.has(key))) return
-    for (const key of keys) url.searchParams.delete(key)
-    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
-}
 
 function clearTemplateParam() {
     clearSearchParams('template')
@@ -71,45 +67,37 @@ function clearTemplateParam() {
 
 export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: { initialSpaces?: SpacePublic[]; initialWorkspaceId?: number | null }) {
     const t = useTranslations('layout')
-    const tOAuthRetry = useTranslations('auth.oauthRetry')
     const tLinkError = useTranslations('account.signIn.linkError')
-    const { user, workspace, loading, isAnonymous, phoneStep } = useSession()
+    const { user, workspace, loading, phoneStep } = useSession()
     const foremanVisible = useForemanStore(selectForemanVisible)
     const foremanFunnel = useForemanStore(state => state.funnel)
-    const foremanIntake = useForemanStore(state => state.intake)
     const foremanOpen = useForemanStore(state => state.open)
     const foremanArrival = useForemanStore(state => state.arrival)
     const foremanWaitlisted = useForemanStore(state => state.waitlisted)
-    const pendingIntake = useOnboardingStore(state => state.pendingIntake)
-    const rewindEnabled = useRewindEnabled()
-    const resumePendingStart = useResumePendingStart()
     const searchParams = useSearchParams()
     const [postPaymentOpen, setPostPaymentOpen] = useState(false)
-    // Le mur ne se referme que sur un succès : la dialog bloquante n'appelle onOpenChange que là.
-    // On ne peut pas se contenter de `isAnonymous`, car un signup en attente de confirmation d'email
-    // laisse la session anonyme en place, et l'utilisateur resterait enfermé derrière son propre mur.
-    const [accountClaimed, setAccountClaimed] = useState(false)
-    const [signInRetry, setSignInRetry] = useState<{ code: string; provider: OAuthProvider | null } | null>(null)
-    // Un anonyme n'est laissé devant le board que le temps de la carte d'accueil : elle ne coûte
-    // aucun modèle et c'est elle qui dessine sa boîte. Une fois répondue, c'est le bouton au pied de
-    // la colonne qui ouvre la dialog de compte, jamais elle qui surgit seule, même colonne refermée :
-    // l'orbe la rouvre sur ce bouton. Le reste (colonne refermée pendant la carte, phase qui n'est
-    // pas un tunnel) le ramène au mur.
-    const foremanHoldsTheWall = foremanFunnel === 'unknown' || (foremanFunnel === 'guided' && (foremanIntake ? foremanOpen !== false : pendingIntake !== null))
-    // Arrivé sur une template ou un partage : la colonne demande elle-même le compte puis le code du
-    // téléphone, avec ce qu'il a cliqué sous les yeux, et les deux murs lui cèdent la place. Le lien
-    // parké tient la supposition le temps que la phase revienne, sinon le mur du téléphone surgit
-    // entre la création du compte et la reprise du tunnel.
+    // Arrivé sur une template ou un partage : la colonne demande elle-même le code du téléphone, avec
+    // ce qu'il a cliqué sous les yeux, et le mur lui cède la place. Le lien parké tient la
+    // supposition le temps que la phase revienne, sinon le mur du téléphone surgit avant la reprise
+    // du tunnel.
     const readyMadeParked = useOnboardingStore(s => s.pendingTemplateLink !== null || s.pendingShareLink !== null)
     const arrivalHoldsTheWall = foremanArrival ? foremanFunnel === 'guided' && !foremanArrival.installed && foremanOpen !== false : foremanFunnel === 'unknown' && readyMadeParked && !workspace?.onboarded_at
-    const accountWallOpen = isAnonymous && !accountClaimed && !foremanHoldsTheWall && !arrivalHoldsTheWall
-    const retryCopy = signInRetry ? oauthRetryCopy(signInRetry.code, signInRetry.provider ? OAUTH_PROVIDER_CONFIG[signInRetry.provider].label : null, tOAuthRetry) : null
     const phoneWallOpen = phoneStep === 'pending' && !arrivalHoldsTheWall
     const templateLinkSlug = useTemplateFlowStore(s => s.linkSlug)
     const shareLinkToken = useAgentShareStore(s => s.token)
     const purchase = useTemplateFlowStore(s => s.purchase)
     const hydrated = useBoardStore(s => s.hydrated)
     const hydrate = useBoardStore(s => s.hydrate)
+    const { view, enabled: simpleViewEnabled } = useWorkspaceView()
+    // Under `md` the Simple view is the phone's Home, the coworker's panel opening over it as on the
+    // board. Unknown until the window is measured, so neither frame mounts for a frame on the wrong side.
+    const phone = useResolvedIsMobile(FOREMAN_COLUMN_QUERY)
+    const simple = view === 'simple' && phone === false
+    const phoneHome = view === 'simple' && phone === true
+    // What is created goes where the frame on screen can show it: on the grid, or into a Box of the list.
+    useEffect(() => {
+        useBoardStore.getState().setCreationFrame(simple || phoneHome ? 'list' : 'board')
+    }, [simple, phoneHome])
     const selectedAgentWorking = useBoardStore(s =>
         s.selectedAgentId !== null &&
         s.agents.some(a => a.id === s.selectedAgentId && a.status === 'working')
@@ -149,43 +137,44 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
         clearSearchParams(WORKSPACE_PARAM)
     }, [loading])
 
+    // Back from the Checkout of a lifetime workspace's first slot, or from leaving it: the slot is
+    // settled without waiting for the webhook, then the app reopens where the purchase started.
+    useEffect(() => {
+        const slug = searchParams.get(PAID_APP_PARAM)
+        if (!isAppSlug(slug) || loading) return
+        const sessionId = searchParams.get(SLOTS_CHECKOUT_PARAM)
+        clearSearchParams(PAID_APP_PARAM, SLOTS_CHECKOUT_PARAM)
+        void (sessionId ? settleSlotsCheckoutAction(slug, sessionId) : Promise.resolve()).finally(() => usePaidAppsStore.getState().openApp(slug))
+    }, [searchParams, loading])
+
     // Every end-of-access email links here: open billing straight away, once the account is known.
     useEffect(() => {
-        if (searchParams.get('billing') !== '1' || loading || isAnonymous) return
+        if (searchParams.get('billing') !== '1' || loading) return
         useBillingStore.getState().openBilling(undefined, 'email_link')
         clearSearchParams('billing')
-    }, [searchParams, loading, isAnonymous])
+    }, [searchParams, loading])
 
     // Connecting a provider from the account settings leaves the app and comes back here: the
     // settings reopen where they were left, with the reason when the connection was refused.
     useEffect(() => {
-        if (searchParams.get(ACCOUNT_PARAM) !== 'sign-in' || loading || isAnonymous) return
+        if (searchParams.get(ACCOUNT_PARAM) !== 'sign-in' || loading) return
         const linkError = searchParams.get(ACCOUNT_LINK_ERROR_PARAM)
         const linkProvider = searchParams.get(ACCOUNT_LINK_PROVIDER_PARAM)
         useAccountStore.getState().openAccount('sign-in')
         if (linkError) toast.error(linkErrorMessage(linkError, isOAuthProvider(linkProvider) ? linkProvider : 'google', tLinkError))
         clearSearchParams(ACCOUNT_PARAM, ACCOUNT_LINK_ERROR_PARAM, ACCOUNT_LINK_PROVIDER_PARAM)
-    }, [searchParams, loading, isAnonymous, tLinkError])
+    }, [searchParams, loading, tLinkError])
 
     // A provider sign-in that failed upstream lands here with the error in the URL, where it would
-    // otherwise stay for the whole session. Only someone still anonymous needs to hear about it: an
-    // account already signed in got there through another tab. A toast would leave them on a screen
-    // with no provider button, so the account dialog reopens and says what happened.
+    // otherwise stay for the whole session. Someone signed out is told on the sign-in page; an
+    // account already signed in got here through another tab, and has nothing to hear.
     useEffect(() => {
         if (loading) return
         const url = new URL(window.location.href)
-        const code = oauthErrorCode(url)
-        if (!code) return
-        if (isAnonymous) {
-            const provider = oauthProviderLeftFor()
-            track('oauth_sign_in_failed', { code, provider })
-            // The URL is the only place the failure lives, and this effect is what wipes it.
-            // eslint-disable-next-line react-hooks/set-state-in-effect
-            setSignInRetry({ code, provider })
-        }
+        if (!oauthErrorCode(url)) return
         const clean = withoutOAuthError(url)
         window.history.replaceState(null, '', `${clean.pathname}${clean.search}${clean.hash}`)
-    }, [searchParams, loading, isAnonymous])
+    }, [searchParams, loading])
 
     // Retour de l'onboarding Stripe Connect d'un créateur : Stripe redirige sur la home, donc c'est
     // ici qu'on rouvre le panel créateur sur son pane payouts. `connect=refresh` signale un lien
@@ -268,7 +257,7 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
         if (!slug || searchParams.has('purchase') || templateLinkStarted.current || !workspace || !user) return
         // Le mur de waitlist passe le funnel en `companion`, et la fiche s'ouvrirait par-dessus avec
         // son bouton de trial : elle reste parkée jusqu'au chargement où une machine est libre.
-        if (isAnonymous || foremanWaitlisted || (!workspace.onboarded_at && !workspace.is_sandbox)) {
+        if (foremanWaitlisted || (!workspace.onboarded_at && !workspace.is_sandbox)) {
             useOnboardingStore.getState().setPendingTemplateLink(slug)
             clearTemplateParam()
             return
@@ -278,18 +267,17 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
         useOnboardingStore.getState().clearPendingTemplateLink()
         useTemplateFlowStore.getState().openLink(slug)
         clearTemplateParam()
-    }, [searchParams, user, workspace, isAnonymous, foremanFunnel, foremanWaitlisted])
+    }, [searchParams, user, workspace, foremanFunnel, foremanWaitlisted])
 
-    // Lien de partage d'agent `?share=<token>` : le jumeau de `?template=`. Le token est parké dans
-    // tous les cas (persisté, car le retour de Google perd la query string) et l'effet rejoue dès que
-    // la session est réelle.
+    // Lien de partage d'agent `?share=<token>` : le jumeau de `?template=`. Le token est parké
+    // (persisté) tant que le workspace n'est pas prêt à l'installer, et l'effet rejoue ensuite.
     const shareLinkStarted = useRef(false)
     useEffect(() => {
         const token = searchParams.get('share') ?? useOnboardingStore.getState().pendingShareLink
         if (!token || shareLinkStarted.current || !workspace || !user) return
-        // Ouverte derrière le mur d'auth, la fiche serait restée par-dessus le mur de waitlist avec son
-        // bouton de trial : on la referme, le token reste parké pour le chargement suivant.
-        if (foremanWaitlisted && !isAnonymous) {
+        // La fiche serait restée par-dessus le mur de waitlist avec son bouton de trial : on la
+        // referme, le token reste parké pour le chargement suivant.
+        if (foremanWaitlisted) {
             useAgentShareStore.getState().closeLink()
             useOnboardingStore.getState().setPendingShareLink(token)
             clearSearchParams('share')
@@ -297,7 +285,7 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
         }
         // Un workspace jamais onboardé passe par le tunnel d'arrivée : c'est la colonne qui présente
         // le coworker partagé et l'installe, la fiche ferait doublon par-dessus.
-        if (isAnonymous || (!workspace.onboarded_at && !workspace.is_sandbox)) {
+        if (!workspace.onboarded_at && !workspace.is_sandbox) {
             useOnboardingStore.getState().setPendingShareLink(token)
             clearSearchParams('share')
             return
@@ -306,33 +294,33 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
         shareLinkStarted.current = true
         useOnboardingStore.getState().clearPendingShareLink()
         clearSearchParams('share')
-    }, [searchParams, user, workspace, isAnonymous, foremanWaitlisted])
+    }, [searchParams, user, workspace, foremanWaitlisted])
 
     // Un email de cycle de vie pointe l'agent dont il parle. Le board doit être hydraté avant, sinon
     // la sélection porte sur un id que le store ne connaît pas encore et rien ne s'ouvre.
     const agentLinkOpened = useRef(false)
     useEffect(() => {
         const agentId = searchParams.get('agent')
-        if (!agentId || agentLinkOpened.current || !hydrated || isAnonymous) return
+        if (!agentId || agentLinkOpened.current || !hydrated) return
         agentLinkOpened.current = true
         const tab = searchParams.get('tab')
         useBoardStore.getState().openAgentTab(agentId, AGENT_FOCUS_TABS.includes(tab as AgentFocusTab) ? (tab as AgentFocusTab) : 'chat')
         clearSearchParams('agent', 'tab')
-    }, [searchParams, hydrated, isAnonymous])
+    }, [searchParams, hydrated])
 
     // A notification email opens the conversation it is about, the same way its toast does. A row
     // the user can no longer read (another workspace, deleted since) leaves the board as it is.
     const notificationLinkOpened = useRef(false)
     useEffect(() => {
         const notificationId = searchParams.get('notification')
-        if (!notificationId || notificationLinkOpened.current || !hydrated || isAnonymous) return
+        if (!notificationId || notificationLinkOpened.current || !hydrated) return
         notificationLinkOpened.current = true
         clearSearchParams('notification')
         void selectMaybeSingle(createClient(), 'notifications', ['agent_id', 'engine_session_id', 'engine_run_id'] as const, { id: notificationId }).then(({ data }) => {
             if (!data) return
             void openConversationFromNotification({ agentId: data.agent_id, engineSessionId: data.engine_session_id, engineRunId: data.engine_run_id })
         })
-    }, [searchParams, hydrated, isAnonymous])
+    }, [searchParams, hydrated])
 
     // Le lien est consommé : le param ne doit plus rien porter, sinon un refresh (après un import
     // réussi comme après une annulation) redemande l'import. Un seul nettoyage ne suffit pas, le
@@ -342,25 +330,6 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
         if (!templateLinkStarted.current || !searchParams.get('template')) return
         clearTemplateParam()
     }, [searchParams])
-
-    // Reprise après conversion d'un compte anonyme : la session réelle est en place (nouvel email,
-    // compte existant, ou Google). Si un brouillon attend et que le flag one-shot est présent, on
-    // termine la création du premier agent sur le workspace désormais résolu.
-    //
-    // Pas tant que le téléphone n'est pas réglé : le paywall s'ouvrirait par-dessus un mur qu'on ne
-    // peut pas fermer. Le flag attend, persisté, et la reprise repart dès le numéro vérifié.
-    useEffect(() => {
-        if (loading || !workspace || phoneStep !== 'clear') return
-        if (!hasPendingStart(useOnboardingStore.getState())) return
-        // Un brouillon posé par le composer de la landing chez quelqu'un qui n'a jamais vu Rerun
-        // n'attend pas le paywall : c'est le Foreman qui ouvre la conversation dessus, et qui le
-        // consomme. Le flag one-shot est consommé quand même, sinon il ressortirait plus tard,
-        // par-dessus la conversation.
-        const foremanTakesOver = useOnboardingStore.getState().firstAgentFromPrompt && !workspace.onboarded_at
-        if (!useOnboardingStore.getState().consumeResume()) return
-        if (foremanTakesOver) return
-        void resumePendingStart()
-    }, [loading, workspace, phoneStep, resumePendingStart])
 
     // Kickoff parqué mais jamais envoyé (reload ou crash pendant le wizard "Finish setup", ou
     // envoi précédent en échec) : on le rejoue au boot et on ouvre le panel de l'agent sur la
@@ -385,23 +354,9 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
         return () => window.removeEventListener('beforeunload', handleBeforeUnload)
     }, [selectedAgentWorking])
 
-    // Le Rewind hebdo s'ouvre tout seul une fois, mais jamais par-dessus un parcours qui tient déjà
-    // l'écran (mur d'auth, onboarding, deep link de template ou de partage).
-    const rewindDeepLinked = searchParams.has('rewind')
-    // Le flag entre dans `ready` plutôt qu'autour du hook, qu'on ne peut pas appeler
-    // conditionnellement : `ready` à faux suffit à ne jamais lire les semaines ni ouvrir la story.
-    const rewindReady = rewindEnabled && hydrated && !isAnonymous && Boolean(workspace?.onboarded_at) && !templateLinkSlug && !shareLinkToken && !purchase
-    useRewindLauncher(workspace?.id, rewindReady, rewindDeepLinked)
-    useEffect(() => {
-        // Nettoyé aussi quand la feature est masquée, sinon `?rewind` colle à l'URL sans rien faire.
-        if (rewindDeepLinked && (rewindReady || !rewindEnabled)) clearSearchParams('rewind')
-    }, [rewindReady, rewindDeepLinked, rewindEnabled])
-
-    // Le changelog arrive derrière la même porte que le Rewind, plus deux conditions à lui : une
-    // session restée anonyme passerait par `accountWallOpen` seul, qui retombe dès que le mur est
-    // écarté ; et deux overlays qui s'ouvrent seuls au même chargement se recouvriraient.
-    const rewindShown = useRewindStore(state => state.shown !== null)
-    const changelogReady = hydrated && !accountWallOpen && !phoneWallOpen && !isAnonymous && Boolean(workspace?.onboarded_at) && !templateLinkSlug && !shareLinkToken && !purchase && !rewindShown
+    // Le changelog ne s'ouvre jamais par-dessus un parcours qui tient déjà l'écran (mur du téléphone,
+    // onboarding, deep link de template ou de partage).
+    const changelogReady = hydrated && !phoneWallOpen && Boolean(workspace?.onboarded_at) && !templateLinkSlug && !shareLinkToken && !purchase
     useChangelogLauncher(user?.id, changelogReady)
 
     useEnsureSandboxSpace()
@@ -413,45 +368,55 @@ export function HomeContent({ initialSpaces = [], initialWorkspaceId = null }: {
     useSessionsRealtime(hydrated)
     useNotificationsRealtime(hydrated ? workspace?.id : undefined)
     useUnseenRunsSync(hydrated ? workspace?.id : undefined, user?.id)
+    useCoworkerPreviewsSync(hydrated && simpleViewEnabled ? workspace?.id : undefined)
 
     // The page load names no workspace, so the server prefetched the stored one. A tab pinned
     // elsewhere shows neither those spaces nor an empty board in their place (the recruit
     // placeholder): it keeps the loader until the store holds its own.
     const serverBoardMatchesTab = initialWorkspaceId === workspace?.id
+    const boardLoading = loading || holdLoader || (!serverBoardMatchesTab && !hydrated)
+    useEffect(() => {
+        useAppBootStore.getState().setBoardReady(!boardLoading)
+    }, [boardLoading])
 
-    if (loading || holdLoader || (!serverBoardMatchesTab && !hydrated)) {
-        return <AppLoader />
-    }
+    if (boardLoading) return null
 
     return (
         <div className="flex flex-col h-full bg-background overflow-hidden">
-            <main className="flex-1 relative overflow-hidden">
-                <BuilderView initialSpaces={serverBoardMatchesTab ? initialSpaces : []} />
-                <WorkspaceSwitcher />
-                <WorkspacePausedBanner />
+            <main className="@container/board flex-1 relative overflow-hidden">
+                {simple ? (
+                    <SimpleWorkspace />
+                ) : phoneHome ? (
+                    <>
+                        <SimplePhoneHome />
+                        <AgentPanel />
+                        <WorkspacePausedBanner />
+                    </>
+                ) : (
+                    <>
+                        <BuilderView initialSpaces={serverBoardMatchesTab ? initialSpaces : []} />
+                        <WorkspaceSwitcher />
+                        <WorkspacePausedBanner />
+                    </>
+                )}
             </main>
             {/* Hors du `<main>` comme il est hors du cadre : l'orbe est `fixed`, sa place ne dépend
                 pas de l'endroit où il est monté. Ici il reste derrière l'écran de chargement. Pas
                 de machine hors onboarding, pas de Foreman. */}
-            {foremanVisible && <ForemanDock />}
-            {/* Le mur d'entrée : le board reste visible derrière, mais rien n'est actionnable tant
-                qu'il n'y a pas de compte. Le signup upgrade la session anonyme en place, donc le
-                workspace déjà provisionné et tout ce qu'un deep link a parké lui restent attachés. */}
-            <AuthDialog variant="welcome" open={accountWallOpen} onOpenChange={() => setAccountClaimed(true)} copy={retryCopy} />
-            {!accountWallOpen && <AuthDialog variant="signin" open={signInRetry !== null && isAnonymous} onOpenChange={open => !open && setSignInRetry(null)} copy={retryCopy} />}
+            {foremanVisible && view !== 'simple' && <ForemanDock />}
             {/* Le mur du téléphone : il prend le relais dès que le compte existe, par quelque porte
                 qu'il soit né, et ne tombe qu'une fois le numéro vérifié. */}
             <PhoneVerificationDialog open={phoneWallOpen} />
             {/* Le mur de capacité : même mécanique, pour un compte créé alors que le pool d'engines
                 est vide. Il tombe tout seul au chargement suivant où une machine est disponible. */}
-            <EngineWaitlistDialog open={foremanWaitlisted && !isAnonymous} />
+            <EngineWaitlistDialog open={foremanWaitlisted} />
             <PostPaymentDialog open={postPaymentOpen} onOpenChange={setPostPaymentOpen} />
             {purchase && <TemplatePurchaseSuccessDialog slug={purchase.slug} sessionId={purchase.sessionId} onOpenChange={open => !open && useTemplateFlowStore.getState().closePurchase()} />}
             {templateLinkSlug && <TemplateDeepLinkDialog slug={templateLinkSlug} />}
             {shareLinkToken && <AgentShareDeepLinkDialog token={shareLinkToken} />}
-            {rewindEnabled && <RewindViewer />}
             <ChangelogDialog />
             <ControlCenter />
+            <WorkspaceDialogs />
         </div>
     )
 }

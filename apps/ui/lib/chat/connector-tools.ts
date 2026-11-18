@@ -1,3 +1,4 @@
+import { ranToolName } from '@rerun/contracts'
 import { stripBridgePrefix } from '@/lib/chat/bridge-name'
 import type { CustomMcpServer, InstalledService } from '@/lib/services/types'
 
@@ -67,8 +68,8 @@ export function humanizeToolSegment(segment: string): string {
 
 // Null means "not a connector tool": the caller falls back to getToolMeta, so anything unmapped
 // keeps today's rendering untouched.
-export function resolveConnectorTool(raw: string, map: ConnectorMap, isBuiltin?: (name: string) => boolean): { label: string; service: ConnectorService } | null {
-    const parsed = parseMcpToolName(raw, map.keys(), isBuiltin)
+export function resolveConnectorTool(raw: string, map: ConnectorMap, isBuiltin?: (name: string) => boolean, input?: unknown): { label: string; service: ConnectorService } | null {
+    const parsed = parseMcpToolName(ranToolName(raw, input), map.keys(), isBuiltin)
     if (!parsed) return null
     const service = map.get(parsed.server)
     if (!service) return null

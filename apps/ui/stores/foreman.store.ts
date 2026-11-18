@@ -39,11 +39,20 @@ type ForemanState = {
      * le board et rien ne part vers le Foreman. Relu à chaque identité, comme la phase.
      */
     waitlisted: boolean
+    /** The onboarding just ended and the Chief of Staff of the engine owes them its first words. */
+    greetPending: boolean
     activity: OrbActivity
     /** The run the engine foreman is streaming or was reattached to, so it can be stopped or picked up again. */
     engineRunId: string | null
-    /** La conversation en cours. En changer vide le chat : c'est tout ce que fait « New task ». */
+    /** The conversation on screen: General, or one of its threads. Changing it swaps the chat. */
     sessionId: string
+    /**
+     * This person's General, the conversation that never closes. A draft id until they first speak in
+     * it, then the server's. On the hub, the onboarding's one conversation.
+     */
+    generalId: string
+    /** A thread "New task" just opened: the server has nothing of it yet, there is nothing to read. */
+    draftId: string | null
     /**
      * Qui sert la conversation en cours. `null` tant qu'aucun message n'est parti : elle suit alors
      * `surface`, puis se fige au premier envoi et ne change plus.
@@ -62,19 +71,14 @@ type ForemanState = {
      */
     planPreview: ShownPlan | null
     /**
-     * La carte d'accueil, qui pose les quatre questions du tunnel avant que le Foreman ne réfléchisse
-     * à quoi que ce soit. Tant qu'elle est là, aucun message n'est parti.
-     */
-    intake: boolean
-    /**
      * La template ou le coworker partagé sur lequel le visiteur est arrivé. Tant qu'il n'est pas
-     * installé la colonne porte son tunnel (compte, téléphone, trial, install) à la place de la
-     * carte d'accueil, qui ne vient qu'après. `null` pour toute autre arrivée.
+     * installé la colonne porte son tunnel (téléphone, trial, install). `null` pour toute autre
+     * arrivée.
      */
     arrival: ForemanArrival | null
     /**
-     * Les divisions que la carte dessine dès qu'elle connaît l'industrie. Champ à part de
-     * `planPreview` et pas le même : la colonne réécrit `planPreview` à chaque message, `null`
+     * Ce que le board dessine avant que rien ne soit construit (le lien sur lequel ils sont arrivés).
+     * Champ à part de `planPreview` et pas le même : la colonne réécrit `planPreview` à chaque message, `null`
      * compris, et effacerait cet aperçu-là au premier mot du Foreman.
      */
     intakePreview: ShownPlan | null
@@ -107,6 +111,7 @@ type ForemanState = {
     yieldToSheet: () => void
     reclaimFromSheet: () => void
     openForFunnel: () => void
+    openInCenter: () => void
     restoreOpen: (open: boolean) => void
     setPlacement: (placement: ForemanPlacement) => void
     restorePlacement: (placement: ForemanPlacement) => void
@@ -114,18 +119,26 @@ type ForemanState = {
     setTab: (tab: ForemanTab) => void
     setFunnel: (funnel: ForemanFunnel) => void
     setWaitlisted: (waitlisted: boolean) => void
-    /** Entrer dans le tunnel : le mode, la carte d'accueil et l'ouverture, d'un seul coup. */
-    startFunnel: (intake: boolean) => void
+    setGreetPending: (pending: boolean) => void
+    /** Entrer dans le tunnel : le mode et l'ouverture, d'un seul coup. */
+    startFunnel: () => void
     setArrival: (arrival: ForemanArrival | null) => void
+    /** « New task »: a thread of its own beside General, on the engine. */
     newChat: () => void
+    /** Brings General back on screen, read again from the server. */
+    showGeneral: () => void
+    /** Slides a thread of General in. */
+    openThread: (sessionId: string) => void
+    /** General's id, once the server named it: the one it reopened, or the one a send landed in. */
+    setGeneral: (sessionId: string, backend?: ForemanBackend) => void
+    /** The onboarding is over under General: the engine's General takes its place. */
+    startEngineGeneral: () => void
     setActivity: (activity: OrbActivity) => void
     setEngineRunId: (engineRunId: string | null) => void
-    setSessionId: (sessionId: string, backend?: ForemanBackend) => void
     setSurface: (surface: ForemanSurface) => void
     /** Fige le backend d'une conversation qui n'a encore rien envoyé. */
     pinBackend: () => void
     setPlanPreview: (plan: ShownPlan | null) => void
-    closeIntake: () => void
     setIntakePreview: (plan: ShownPlan | null) => void
     /** Ouvrir la colonne et lui confier un message, comme si on l'avait tapé. */
     askForeman: (text: string) => void
@@ -147,6 +160,12 @@ type ForemanState = {
     reset: () => void
 }
 
+// What a conversation leaves behind when another one takes the screen: its run, its orb, its plan.
+const CONVERSATION_SWITCH = { tab: 'assistant', backend: null, activity: 'idle', engineRunId: null, planPreview: null, dock: IDLE_DOCK_FEED } as const satisfies Partial<ForemanState>
+
+// Threads only exist beside the engine's foreman: the onboarding's is one conversation from start to end.
+const onEngine = (state: ForemanState) => state.surface === 'engine'
+
 // La conversation, elle, n'est pas persistée : elle vit côté serveur, et la colonne va la rechercher
 // au montage. Seule l'ouverture l'est, et seulement quand elle vient d'un geste (lib/foreman-open).
 export const useForemanStore = create<ForemanState>()((set, get) => ({
@@ -157,13 +176,13 @@ export const useForemanStore = create<ForemanState>()((set, get) => ({
     tab: 'assistant',
     funnel: 'unknown',
     waitlisted: false,
+    greetPending: false,
     activity: 'idle',
     engineRunId: null,
-    sessionId: randomUuid(),
+    ...freshGeneral(),
     backend: null,
     surface: 'unknown',
     planPreview: null,
-    intake: false,
     arrival: null,
     intakePreview: null,
     pendingPrompt: null,
@@ -198,6 +217,8 @@ export const useForemanStore = create<ForemanState>()((set, get) => ({
         applyOpen(set, true)
         set({ tab: 'assistant' })
     },
+    // The Simple view puts it in the middle: no gesture on the board's column, so no preference written.
+    openInCenter: () => applyOpen(set, true),
     // Ce que le client a lu au montage. Un kickoff qui a déjà tranché garde la main.
     restoreOpen: open => {
         if (get().open !== null) return
@@ -215,19 +236,30 @@ export const useForemanStore = create<ForemanState>()((set, get) => ({
     setTab: tab => set({ tab }),
     setFunnel: funnel => set({ funnel }),
     setWaitlisted: waitlisted => set({ waitlisted }),
-    // En un seul `set` et pas trois : entre « le tunnel commence » et « la carte est là », le
-    // kickoff verrait une découverte sans carte devant elle et enverrait son marqueur, ce que toute
-    // cette carte existe pour éviter.
-    startFunnel: intake => {
+    setGreetPending: greetPending => set({ greetPending }),
+    startFunnel: () => {
         useBoardStore.getState().selectAgent(null)
         useBoardStore.getState().selectSpace(null)
-        set({ funnel: 'guided', intake, open: true, yieldedToSheet: false, tab: 'assistant' })
+        set({ funnel: 'guided', open: true, yieldedToSheet: false, tab: 'assistant' })
     },
     setArrival: arrival => set({ arrival }),
-    newChat: () => set({ tab: 'assistant', sessionId: randomUuid(), backend: null, activity: 'idle', engineRunId: null, planPreview: null, intake: false, intakePreview: null, dock: IDLE_DOCK_FEED }),
+    newChat: () => {
+        const sessionId = randomUuid()
+        set({ ...CONVERSATION_SWITCH, sessionId, draftId: sessionId, intakePreview: null })
+    },
+    showGeneral: () => {
+        if (get().sessionId !== get().generalId) set({ ...CONVERSATION_SWITCH, sessionId: get().generalId })
+    },
+    openThread: sessionId => {
+        if (get().sessionId !== sessionId) set({ ...CONVERSATION_SWITCH, sessionId, backend: 'engine' })
+    },
+    setGeneral: (sessionId, backend) => set({ generalId: sessionId, sessionId, backend: backend ?? null }),
+    startEngineGeneral: () => {
+        const sessionId = randomUuid()
+        set({ ...CONVERSATION_SWITCH, sessionId, generalId: sessionId })
+    },
     setActivity: activity => set({ activity }),
     setEngineRunId: engineRunId => set({ engineRunId }),
-    setSessionId: (sessionId, backend) => set({ sessionId, backend: backend ?? null }),
     setSurface: surface => set({ surface }),
     pinBackend: () => {
         if (get().backend === null) set({ backend: selectForemanBackend(get()) })
@@ -235,15 +267,19 @@ export const useForemanStore = create<ForemanState>()((set, get) => ({
     setPlanPreview: planPreview => set({ planPreview }),
     // L'aperçu de la carte survit à sa fermeture : les Box restent dessinées pendant que le Foreman
     // réfléchit, jusqu'à ce que son propre plan les remplace.
-    closeIntake: () => set({ intake: false }),
     setIntakePreview: intakePreview => set({ intakePreview }),
     // Un geste, comme `toggle` : l'ouverture devient la préférence.
+    // What is asked from outside the column goes to General, whatever thread is on screen.
     askForeman: text => {
         applyOpen(set, true)
         rememberForemanOpen(true)
+        if (onEngine(get())) get().showGeneral()
         set({ pendingPrompt: text, tab: 'assistant' })
     },
-    sendToForeman: text => set({ pendingPrompt: text, engaged: true }),
+    sendToForeman: text => {
+        if (onEngine(get())) get().showGeneral()
+        set({ pendingPrompt: text, engaged: true })
+    },
     engage: () => set({ engaged: true }),
     setDock: dock => set({ dock }),
     setPillAvailable: pillAvailable => set({ pillAvailable }),
@@ -258,13 +294,13 @@ export const useForemanStore = create<ForemanState>()((set, get) => ({
             yieldedToSheet: false,
             funnel: 'unknown',
             waitlisted: false,
+            greetPending: false,
             activity: 'idle',
             engineRunId: null,
-            sessionId: randomUuid(),
+            ...freshGeneral(),
             backend: null,
             surface: 'unknown',
             planPreview: null,
-            intake: false,
             arrival: null,
             intakePreview: null,
             pendingPrompt: null,
@@ -274,6 +310,11 @@ export const useForemanStore = create<ForemanState>()((set, get) => ({
             gettingStartedAvailable: false,
         })),
 }))
+
+function freshGeneral() {
+    const sessionId = randomUuid()
+    return { sessionId, generalId: sessionId, draftId: null }
+}
 
 function applyOpen(set: (partial: Partial<ForemanState>) => void, open: boolean) {
     if (open) {
@@ -288,6 +329,9 @@ export const selectForemanBackend = (state: ForemanState): ForemanBackend => sta
 
 /** Pas de machine hors onboarding : ni colonne ni orbe. */
 export const selectForemanVisible = (state: ForemanState): boolean => state.surface !== 'none'
+
+/** A thread of General is on screen, rather than General itself. */
+export const selectForemanInThread = (state: ForemanState): boolean => onEngine(state) && state.sessionId !== state.generalId
 
 /** Pour tous ceux qui n'ont rien à faire du `null` : non tranché, la colonne n'est pas ouverte. */
 export const selectForemanOpen = (state: ForemanState) => state.open === true

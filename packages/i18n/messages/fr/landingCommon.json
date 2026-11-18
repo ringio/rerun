@@ -1,7 +1,7 @@
 {
     "site": {
-        "title": "Rerun : des employés IA qui tournent sur votre abonnement ChatGPT ou Claude",
-        "description": "Embauchez des employés IA pour la vente, le support, le marketing et l'admin. Ils tournent sur votre abonnement ChatGPT ou Claude, des crédits inclus ou votre clé API. Essai gratuit de {trialDays} jours."
+        "title": "Rerun : employés IA sur votre forfait ChatGPT ou Claude",
+        "description": "Employés IA pour vente, support, marketing et admin, sur votre forfait ChatGPT ou Claude, nos crédits ou votre clé API. Essai gratuit de {trialDays} jours."
     },
     "nav": {
         "items": {
@@ -160,6 +160,8 @@
         "main": "Principal",
         "starOnGithub": "Étoile sur GitHub",
         "login": "Se connecter",
+        "download": "Télécharger",
+        "openWebApp": "Ouvrir l’app web",
         "browseAll": {
             "label": "Voir tous les templates",
             "description": "Toute la bibliothèque, chaque catégorie sur une seule page."
@@ -209,6 +211,7 @@
             "legal": "Mentions légales"
         },
         "resources": {
+            "about": "À propos",
             "docs": "Docs",
             "github": "GitHub",
             "pricing": "Tarifs",
@@ -258,11 +261,6 @@
             "other": "Autres"
         },
         "cookieSettings": "Réglages des cookies"
-    },
-    "languageBanner": {
-        "offer": "Cette page est disponible en français.",
-        "open": "Lire en français",
-        "dismiss": "Fermer"
     },
     "discord": "Rejoindre notre Discord",
     "tabNudge": {

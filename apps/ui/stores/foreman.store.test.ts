@@ -9,7 +9,7 @@ vi.mock('@/lib/foreman-layout', () => ({ rememberForemanPlacement: vi.fn() }))
 import { rememberForemanPlacement } from '@/lib/foreman-layout'
 import type { ForemanPlacement } from '@/lib/foreman-layout'
 import { rememberForemanOpen } from '@/lib/foreman-open'
-import { foremanOrbState, selectForemanBackend, selectForemanOpen, selectForemanVisible, useForemanStore } from './foreman.store'
+import { foremanOrbState, selectForemanBackend, selectForemanInThread, selectForemanOpen, selectForemanVisible, useForemanStore } from './foreman.store'
 
 const INITIAL = useForemanStore.getState()
 const DOCK: ForemanPlacement = { mode: 'dock', side: 'right', width: 400, height: 600, dockWidth: 400 }
@@ -60,9 +60,9 @@ describe('opening', () => {
         expect(rememberForemanOpen).not.toHaveBeenCalled()
     })
 
-    it('starts the funnel with its intake card in one go', () => {
-        useForemanStore.getState().startFunnel(true)
-        expect(useForemanStore.getState()).toMatchObject({ funnel: 'guided', intake: true, open: true })
+    it('starts the funnel open on the assistant in one go', () => {
+        useForemanStore.getState().startFunnel()
+        expect(useForemanStore.getState()).toMatchObject({ funnel: 'guided', open: true, tab: 'assistant' })
     })
 
     it('opens and parks a prompt when asked from outside the column', () => {
@@ -137,8 +137,61 @@ describe('backend', () => {
         store.pinBackend()
         store.setPlanPreview({} as never)
         store.newChat()
-        expect(useForemanStore.getState()).toMatchObject({ backend: null, planPreview: null, intakePreview: null, intake: false })
+        expect(useForemanStore.getState()).toMatchObject({ backend: null, planPreview: null, intakePreview: null })
         expect(useForemanStore.getState().sessionId).not.toBe(before)
+    })
+})
+
+describe('General and threads', () => {
+    beforeEach(() => useForemanStore.getState().setSurface('engine'))
+
+    it('opens « New task » as a thread beside General, with nothing to read from the server', () => {
+        const store = useForemanStore.getState()
+        store.setGeneral('general', 'engine')
+        store.newChat()
+        const state = useForemanStore.getState()
+        expect(state.generalId).toBe('general')
+        expect(state.sessionId).not.toBe('general')
+        expect(state.draftId).toBe(state.sessionId)
+        expect(selectForemanInThread(state)).toBe(true)
+    })
+
+    it('slides a thread in on the engine, then brings General back', () => {
+        const store = useForemanStore.getState()
+        store.setGeneral('general', 'engine')
+        store.setEngineRunId('run-of-general')
+        store.openThread('thread-1')
+        expect(useForemanStore.getState()).toMatchObject({ sessionId: 'thread-1', backend: 'engine', engineRunId: null })
+        store.showGeneral()
+        expect(useForemanStore.getState()).toMatchObject({ sessionId: 'general', backend: null })
+        expect(selectForemanInThread(useForemanStore.getState())).toBe(false)
+    })
+
+    it('sends what is asked from outside the column to General, whatever thread is on screen', () => {
+        const store = useForemanStore.getState()
+        store.setGeneral('general', 'engine')
+        store.openThread('thread-1')
+        store.askForeman('Set up my CRM')
+        expect(useForemanStore.getState()).toMatchObject({ sessionId: 'general', pendingPrompt: 'Set up my CRM' })
+        store.openThread('thread-1')
+        store.sendToForeman('From the pill')
+        expect(useForemanStore.getState()).toMatchObject({ sessionId: 'general', pendingPrompt: 'From the pill' })
+    })
+
+    it('has no threads beside the onboarding: the conversation on screen stays General', () => {
+        const store = useForemanStore.getState()
+        store.setSurface('onboarding')
+        store.newChat()
+        expect(selectForemanInThread(useForemanStore.getState())).toBe(false)
+    })
+
+    it('hands the engine a General of its own once the onboarding is over under the one on screen', () => {
+        const store = useForemanStore.getState()
+        store.setGeneral('onboarding', 'hub')
+        store.startEngineGeneral()
+        const state = useForemanStore.getState()
+        expect(state.generalId).not.toBe('onboarding')
+        expect(state).toMatchObject({ sessionId: state.generalId, backend: null, draftId: null })
     })
 })
 
@@ -147,10 +200,10 @@ describe('reset', () => {
         const store = useForemanStore.getState()
         store.restoreOpen(true)
         store.restorePlacement(DOCK)
-        store.startFunnel(true)
+        store.startFunnel()
         store.askForeman('hi')
         store.reset()
-        expect(useForemanStore.getState()).toMatchObject({ open: true, placement: DOCK, funnel: 'unknown', intake: false, pendingPrompt: null, accountSwitches: 1 })
+        expect(useForemanStore.getState()).toMatchObject({ open: true, placement: DOCK, funnel: 'unknown', pendingPrompt: null, accountSwitches: 1 })
     })
 })
 

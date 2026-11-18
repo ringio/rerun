@@ -106,6 +106,9 @@ export type InstalledService = {
     app?: AppTarget
     authMethodId?: string
     installedAt: string
+    // Lent by the workspace's Vault rather than installed in the coworker's own folder: removing it
+    // only detaches the coworker, and one shared with every coworker is changed from the Vault.
+    vault?: { itemId: string; sharedWithAll: boolean }
 }
 
 // Outcome of resetting a connected service: 'auth' when only the sign-in was cleared (the
@@ -125,6 +128,7 @@ export type PublishedAccessMode = 'public' | 'workspace' | 'password' | 'invited
 export type PublishResult = {
     status: 'published'
     url: string // <slug>.rerun.site, or /p/<slug> where no publish host is configured
+    fileUrl: string | null // the bytes of a single file, for a service that downloads it; null for a page or a site
     slug: string
     path: string
     kind: 'file' | 'site'
@@ -142,6 +146,7 @@ export type PublishedFile = {
     agentId: string
     path: string
     url: string
+    fileUrl: string | null
     kind: 'file' | 'site'
     contentType: string
     size: number

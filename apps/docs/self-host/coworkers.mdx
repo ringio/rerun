@@ -50,13 +50,21 @@ A coworker sits in a Box on the board. It has a name, a handle other coworkers c
 
 Scheduled tasks run on your server, so they only fire while it is up. Webhook URLs point at your `NEXT_PUBLIC_APP_URL`: a service on the internet can only call them when your app is reachable from the internet.
 
-Notifications show in the app. This build sends no email notification.
+Notifications show in the app. Notification emails are paused in this version, on every install, and there are no push notifications to the mobile app on your install.
 
 ## Its computer
 
 Each coworker has a Chromium browser and a screen of its own, on your server. Open **Desktop** from the coworker to watch it work, and take over when it needs your hands, for a captcha or a sign-in.
 
 The browser opens the screen directly on your server's address, so the screen needs that address reachable from your browser. See [The desktop screen](/self-host/servers#the-desktop-screen).
+
+Under the hood, the engine starts an Xvfb display for each coworker the first time it needs a screen, at 1920x1080, on the first free display number (`:N`). Its browser and its desktop both use that display, and the desktop is served by x11vnc on `127.0.0.1`, port `5900` plus the display number. The display stops a minute after nothing uses it, the desktop five minutes after the last person watching left, unless a takeover is still open.
+
+Only the screens are separate. Every coworker runs as the engine's user (`rerun` in the Docker image), in the same container: its programs, its ports and its installed packages are visible to the other coworkers. A skill that stops programs by name stops them for every coworker. See [What is its own, what is shared](/agents/configure#what-is-its-own-what-is-shared).
+
+<Warning>
+  An engine started with `DISPLAY` set, from a desktop session for instance, starts no Xvfb: every coworker draws on that one screen. Unset `DISPLAY` before starting the engine to give each coworker its own.
+</Warning>
 
 ## Its tools
 

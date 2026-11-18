@@ -13,6 +13,7 @@ import {
     ENGINE_CAPABILITY_FILES_STREAM,
     ENGINE_CAPABILITY_FOREMAN_FILES,
     ENGINE_CAPABILITY_SCHEDULE_RENAME,
+    ENGINE_CAPABILITY_VAULT,
     engineDbGroupsSchema,
     engineRowUpdateResultSchema,
     engineTableViewSchema,
@@ -28,7 +29,6 @@ import {
     agentDuplicateResultSchema,
     agentImportResultSchema,
     type AgentArchivePlan,
-    type BoxPlan,
     type AgentDuplicateResult,
     type AgentImportResult,
     type ForemanBrief,
@@ -208,12 +208,6 @@ export async function setBoxDefault(conn: EngineConnection, pick: BoxDefault | n
         return
     }
     await request(conn, '/connections/default', { method: 'PUT', body: JSON.stringify(pick) }, () => undefined)
-}
-
-// Whether the box runs premium models as asked or steps them down. An engine older than plans
-// answers 404, which leaves it running everything as it always has.
-export async function setBoxPlan(conn: EngineConnection, plan: BoxPlan): Promise<void> {
-    await request(conn, '/plan', { method: 'PUT', body: JSON.stringify(plan) }, () => undefined)
 }
 
 export async function createConnection(conn: EngineConnection, params: CreateBoxConnectionInput): Promise<BoxConnection> {
@@ -655,8 +649,11 @@ async function engineCapabilities(conn: EngineConnection): Promise<Set<string>> 
     const cached = capabilityCache.get(conn.baseUrl)
     if (cached && Date.now() - cached.at < CAPABILITIES_TTL_MS) return cached.caps
 
-    const caps = new Set(await getEngineHealth(conn).then(h => h.capabilities).catch(() => []))
-    capabilityCache.set(conn.baseUrl, { caps, at: Date.now() })
+    // A box that did not answer (restarting, unreachable) says nothing about what it can do: kept
+    // for five minutes, that silence would hide its Vault and send writes back to each coworker.
+    const health = await getEngineHealth(conn).catch(() => null)
+    const caps = new Set(health?.capabilities ?? [])
+    if (health) capabilityCache.set(conn.baseUrl, { caps, at: Date.now() })
     return caps
 }
 
@@ -682,6 +679,11 @@ export async function supportsCustomProvider(conn: EngineConnection): Promise<bo
 
 export async function supportsScheduleRename(conn: EngineConnection): Promise<boolean> {
     return (await engineCapabilities(conn)).has(ENGINE_CAPABILITY_SCHEDULE_RENAME)
+}
+
+// The box keeps the workspace's Vault. Without it, every connector stays in its coworker's folder.
+export async function supportsVault(conn: EngineConnection): Promise<boolean> {
+    return (await engineCapabilities(conn)).has(ENGINE_CAPABILITY_VAULT)
 }
 
 // --- Desktop ---

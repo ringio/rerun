@@ -9,13 +9,13 @@
         "contactSupport": "Contacter le support"
     },
     "menu": {
-        "weeklyRewind": "Rewind de la semaine",
         "whatsNew": "Nouveautés",
         "gettingStarted": "Premiers pas",
         "docs": "Documentation",
         "community": "Communauté",
         "shortcuts": "Raccourcis",
         "installApp": "Installer l'app",
+        "desktopApp": "Télécharger l’app de bureau",
         "hireExpert": "Engager un expert"
     },
     "power": {
@@ -96,12 +96,15 @@
             "servers": "Seul un admin peut gérer les serveurs",
             "billing": "Seul un admin peut gérer la facturation"
         },
+        "needsPlan": "Disponible dès le début de votre essai gratuit",
         "apiKeys": "Clés API et MCP",
         "settings": "Paramètres",
         "members": "Membres",
         "brain": "Brain",
         "brainProposals": "{count, plural, one {# proposition à examiner} other {# propositions à examiner}}",
         "aiProviders": "Fournisseurs d'IA",
+        "vault": "Vault",
+        "vaultSignedOut": "Une app du Vault est déconnectée",
         "servers": "Serveurs",
         "billing": "Facturation",
         "newWorkspace": "Nouveau workspace",

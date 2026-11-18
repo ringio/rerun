@@ -2,21 +2,18 @@ import { COWORKER_NOT_FOUND, assertSessionInWorkspace, enforce, requireLightSess
 import { AuthorizationError, requireWorkspaceContext } from '@/app/api/_auth/ownership'
 import type { Database } from '@/app/api/database.types'
 import type { SessionStatus } from '@/lib/board/types'
+import { seedSessionTitle } from '@/lib/chat/session-title'
 import { getRunSteps, listRuns } from '@/lib/engine/client'
 import type { EngineConnection, EngineRun, SessionSource } from '@/lib/engine/types'
 import { FOREMAN_AGENT_ID, type SessionKind, type Usage } from '@rerun/contracts'
 import { createServiceRoleClient } from '@/supabase/serviceRole'
 import { selectMany, selectManyWithJoins, selectMaybeSingle, selectMaybeSingleWithJoins } from '@/supabase/supabase-helpers'
-import { isTemplateContentLocked } from '@/lib/templates/content-lock'
 import { isPlanLimited } from './capacity.service'
 import { findWorkspaceEngine, NoEngineError, type WorkspaceEngine } from './workspace-engine.service'
 
 export type AgentChatTarget = {
     engineAgentId: string
     conn: EngineConnection
-    // Whether the content this agent inherited from a template has to stay sealed. Resolved here
-    // because this is the one place every read of an agent already goes through.
-    contentLocked: boolean
 }
 
 // Ownership and access gate. This is the single chokepoint for the agent server actions, /api/chat,
@@ -49,16 +46,15 @@ export async function resolveRunTarget(agentId: string, access: AccessLevel = 'u
     if (ctx.authUser.is_anonymous) throw new AuthorizationError('coworkerNotFound')
     const engine = await findWorkspaceEngine(ctx.workspace.id)
     if (!engine) throw new NoEngineError()
-    return { conn: engine.conn, engineAgentId: FOREMAN_AGENT_ID, contentLocked: false }
+    return { conn: engine.conn, engineAgentId: FOREMAN_AGENT_ID }
 }
 
 async function fetchAgentRow(agentId: string) {
     const { data } = await selectMaybeSingleWithJoins(
         createServiceRoleClient(),
         'agents',
-        ['workspace_id', 'space_id', 'engine_agent_id', 'template_id', 'disabled_at', 'disabled_reason'] as const,
+        ['workspace_id', 'space_id', 'engine_agent_id', 'disabled_at', 'disabled_reason'] as const,
         {
-            workspaces: { table: 'workspaces', foreignKey: 'workspaces', columns: ['subscription_status', 'is_sandbox'] },
             space: { table: 'spaces', foreignKey: 'spaces', columns: ['visibility'] },
         } as const,
         { id: agentId },
@@ -82,7 +78,7 @@ function buildTarget(row: NonNullable<Awaited<ReturnType<typeof fetchAgentRow>>>
 
     if (!engine) throw new NoEngineError()
 
-    return { engineAgentId: row.engine_agent_id, conn: engine.conn, contentLocked: isTemplateContentLocked({ templateId: row.template_id }, row.workspaces) }
+    return { engineAgentId: row.engine_agent_id, conn: engine.conn }
 }
 
 // A webhook trigger has no session and no API key: its authorization IS the secret token in the
@@ -94,12 +90,7 @@ export async function resolveAgentTargetForTrigger(agentId: string): Promise<Age
     if (!row || row.disabled_at || !row.engine_agent_id) return null
     const engine = await findWorkspaceEngine(row.workspace_id)
     if (!engine) return null
-    return {
-        engineAgentId: row.engine_agent_id,
-        conn: engine.conn,
-        // A webhook renders nothing to a human: there is no payload here to seal.
-        contentLocked: false,
-    }
+    return { engineAgentId: row.engine_agent_id, conn: engine.conn }
 }
 
 // Resolve an existing Supabase session row to its engine session id.
@@ -136,7 +127,7 @@ export async function createSessionRow(agentId: string, engineSessionId: string,
         .insert<Database['public']['Tables']['sessions']['Insert']>({
             agent_id: agentId,
             engine_session_id: engineSessionId,
-            title: kind === 'general' ? GENERAL_SESSION_TITLE : title?.slice(0, 50) || 'New conversation',
+            title: kind === 'general' ? GENERAL_SESSION_TITLE : seedSessionTitle(title),
             origin_agent_id: originAgentId ?? null,
             source: source ?? 'dashboard',
             kind,
@@ -178,7 +169,7 @@ export async function ensureSessionRow(agentId: string, engineSessionId: string,
         {
             agent_id: agentId,
             engine_session_id: engineSessionId,
-            title: title?.slice(0, 50) || 'New conversation',
+            title: seedSessionTitle(title),
             origin_agent_id: options?.originAgentId ?? null,
             source: options?.source ?? 'dashboard',
             status: options?.status ?? 'idle',

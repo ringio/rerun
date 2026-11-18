@@ -42,7 +42,7 @@ vi.mock('@/ee/services/billing.service', () => ({
 
 const BUSINESS = { name: 'Acme SAS', type: 'eu_vat', value: 'FR12345678901' } as const
 
-const SELECTION = { quantities: { credit_pack: 1, linkedin_slot: 0, whatsapp_slot: 0 }, interval: 'yearly' } as const
+const SELECTION = { quantities: { linkedin_slot: 0, whatsapp_slot: 1 }, interval: 'yearly' } as const
 
 beforeEach(() => {
     vi.resetAllMocks()
@@ -162,6 +162,12 @@ describe('the thin billing actions', () => {
         await expect(changePlanAction(SELECTION)).resolves.toEqual({ ok: false, error: 'Failed to change your plan', code: 'changePlanFailed' })
     })
 
+    it('refuses the credit packs a page loaded before they left the plan still sends', async () => {
+        const stale = { ...SELECTION, quantities: { ...SELECTION.quantities, credit_pack: 2 } } as never
+        await expect(changePlanAction(stale)).resolves.toMatchObject({ ok: false, code: 'reloadToBuyCredit' })
+        expect(billing.changePlan).not.toHaveBeenCalled()
+    })
+
     it('passes on the decline the service already worded for the customer', async () => {
         vi.mocked(billing.changePlan).mockRejectedValue(new Error('Your card was declined.'))
         await expect(changePlanAction(SELECTION)).resolves.toEqual({ ok: false, error: 'Your card was declined.' })
@@ -182,17 +188,17 @@ describe('the thin billing actions', () => {
     })
 
     it('refuses a selection the schema does not know before reaching the service', async () => {
-        await expect(changePlanAction({ quantities: { credit_pack: -1, linkedin_slot: 0, whatsapp_slot: 0 }, interval: 'monthly' })).resolves.toMatchObject({ ok: false })
-        await expect(createPlanCheckoutAction({ quantities: { credit_pack: 0, linkedin_slot: 0, whatsapp_slot: 0 }, interval: 'weekly' as never })).resolves.toMatchObject({ ok: false })
+        await expect(changePlanAction({ quantities: { linkedin_slot: -1, whatsapp_slot: 0 }, interval: 'monthly' })).resolves.toMatchObject({ ok: false })
+        await expect(createPlanCheckoutAction({ quantities: { linkedin_slot: 0, whatsapp_slot: 0 }, interval: 'weekly' as never })).resolves.toMatchObject({ ok: false })
         expect(billing.changePlan).not.toHaveBeenCalled()
         expect(billing.createPlanCheckoutSession).not.toHaveBeenCalled()
     })
 
-    it('drops the agent pack a page loaded before the deploy still sends, rather than refusing the change', async () => {
+    it('drops the agent pack and the empty credit pack a page loaded before the deploy still sends, rather than refusing the change', async () => {
         vi.mocked(billing.changePlan).mockResolvedValue({ trialEnded: true, switchAt: null, paymentClientSecret: null })
         const stale = { quantities: { agent_pack: 3, credit_pack: 0, linkedin_slot: 0, whatsapp_slot: 0 }, interval: 'monthly' } as never
         await expect(changePlanAction(stale)).resolves.toMatchObject({ ok: true })
-        expect(billing.changePlan).toHaveBeenCalledWith({ quantities: { credit_pack: 0, linkedin_slot: 0, whatsapp_slot: 0 }, interval: 'monthly' })
+        expect(billing.changePlan).toHaveBeenCalledWith({ quantities: { linkedin_slot: 0, whatsapp_slot: 0 }, interval: 'monthly' })
     })
 
     it('sends the refusal as a code a French screen reads in French', async () => {

@@ -4,7 +4,9 @@ import { getWorkspaceConnection } from '@/app/api/_services/workspace-engine.ser
 import { startChat } from '@/lib/chat/start-chat'
 import { cancelRun } from '@/lib/engine/client'
 import { isPhoneStepPending } from '@rerun/cloud/phone.server'
-import { cancelForemanSessionRuns, loadForemanConversation } from '@/lib/foreman/conversation'
+import { cancelForemanSessionRuns, findForemanGeneral, ForemanGeneralAlreadyOpenError, loadForemanConversation, loadForemanConversationById, startEngineConversation, touchForemanConversation } from '@/lib/foreman/conversation'
+import { foremanEngineBrief } from '@/lib/foreman/engine-brief'
+import { readAnswers, writeAnswers } from '@/lib/foreman/profile'
 import { loadForemanState } from '@/lib/foreman/state'
 import { resolveForemanSurface } from '@/lib/foreman/surface.server'
 import { PHONE_REQUIRED_MESSAGE } from '@rerun/cloud/phone'
@@ -22,17 +24,33 @@ vi.mock('@/lib/engine/client', () => ({ cancelRun: vi.fn(), reconnectRun: vi.fn(
 vi.mock('@/lib/foreman/conversation', () => ({
     cancelForemanSessionRuns: vi.fn(),
     engineSessionOf: vi.fn().mockResolvedValue(null),
+    findForemanGeneral: vi.fn().mockResolvedValue(null),
+    ForemanGeneralAlreadyOpenError: class ForemanGeneralAlreadyOpenError extends Error {
+        constructor(readonly general: { id: string; engineSessionId: string | null }) {
+            super('General already open')
+        }
+    },
     loadForemanConversation: vi.fn(),
-    readForemanEngineMessages: vi.fn(),
+    loadForemanConversationById: vi.fn(),
     startEngineConversation: vi.fn(),
     touchForemanConversation: vi.fn(),
 }))
 vi.mock('@/lib/foreman/engine-brief', () => ({ foremanEngineBrief: vi.fn() }))
+vi.mock('@/lib/foreman/profile', () => ({ readAnswers: vi.fn(), writeAnswers: vi.fn() }))
 vi.mock('@/lib/foreman/state', () => ({ loadForemanState: vi.fn() }))
 vi.mock('@/lib/foreman/surface.server', () => ({ resolveForemanSurface: vi.fn() }))
 
 const URL = 'https://rerun.test/api/chat/foreman/engine'
-const post = () => new Request(URL, { method: 'POST', body: JSON.stringify({ sessionId: 'session', text: 'ship it' }) })
+const post = (extra: Record<string, unknown> = {}) => new Request(URL, { method: 'POST', body: JSON.stringify({ sessionId: 'session', text: 'ship it', ...extra }) })
+
+const engineStream = (engineSessionId: string, runId: string) => new Response('data: {}\n\n', { headers: { 'x-session-id': engineSessionId, 'x-run-id': runId } })
+
+function onTheEngine() {
+    vi.mocked(isPhoneStepPending).mockResolvedValue(false)
+    vi.mocked(resolveForemanSurface).mockResolvedValue('engine' as never)
+    vi.mocked(getWorkspaceConnection).mockResolvedValue({ baseUrl: 'https://engine.test', apiKey: null } as never)
+    vi.mocked(callableEngineAgentIds).mockResolvedValue([])
+}
 
 describe('/api/chat/foreman/engine', () => {
     beforeEach(() => {
@@ -83,6 +101,57 @@ describe('/api/chat/foreman/engine', () => {
         expect(vi.mocked(startChat).mock.calls[0][2]).toMatchObject({ callableAgentIds: ['engine-open'] })
     })
 
+    describe('the first words the welcome page leaves owed', () => {
+        const kickoff = () => post({ text: '[[foreman:start]]' })
+
+        it('speaks first once, spending the greeting once the engine took the turn', async () => {
+            onTheEngine()
+            vi.mocked(loadForemanState).mockResolvedValue({ phase: 'companion', answers: { onboarding: { greetPending: true } } } as never)
+            vi.mocked(readAnswers).mockResolvedValue({ industry: 'saas', onboarding: { teamDone: true, greetPending: true } })
+            vi.mocked(startChat).mockResolvedValue(engineStream('engine-1', 'run-1'))
+
+            const response = await POST(kickoff())
+
+            expect(response.status).toBe(200)
+            expect(writeAnswers).toHaveBeenCalledWith(expect.anything(), { industry: 'saas', onboarding: { teamDone: true, greetPending: false } }, false)
+            expect(foremanEngineBrief).toHaveBeenCalledWith(expect.anything(), { greeting: true })
+            expect(vi.mocked(startChat).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(writeAnswers).mock.invocationCallOrder[0])
+        })
+
+        it('keeps the greeting owed when the machine did not take the turn', async () => {
+            onTheEngine()
+            vi.mocked(loadForemanState).mockResolvedValue({ phase: 'companion', answers: { onboarding: { greetPending: true } } } as never)
+            vi.mocked(startChat).mockResolvedValue(new Response('down', { status: 502 }))
+
+            const response = await POST(kickoff())
+
+            expect(response.status).toBe(502)
+            expect(writeAnswers).not.toHaveBeenCalled()
+        })
+
+        it('turns a second greeting away, from another tab or a reload', async () => {
+            onTheEngine()
+            vi.mocked(loadForemanState).mockResolvedValue({ phase: 'companion', answers: { onboarding: { greetPending: false } } } as never)
+
+            const response = await POST(kickoff())
+
+            expect(response.status).toBe(409)
+            expect(await response.json()).toEqual({ error: 'greeting_spent' })
+            expect(startChat).not.toHaveBeenCalled()
+        })
+
+        it('briefs an ordinary message without the greeting', async () => {
+            onTheEngine()
+            vi.mocked(loadForemanState).mockResolvedValue({ phase: 'companion', answers: { onboarding: { greetPending: true } } } as never)
+            vi.mocked(startChat).mockResolvedValue(engineStream('engine-1', 'run-1'))
+
+            await POST(post())
+
+            expect(foremanEngineBrief).toHaveBeenCalledWith(expect.anything(), { greeting: false })
+            expect(writeAnswers).not.toHaveBeenCalled()
+        })
+    })
+
     it('sweeps the session before stopping the run by name, so a message waiting behind it survives', async () => {
         const order: string[] = []
         vi.mocked(getWorkspaceConnection).mockResolvedValue({ baseUrl: 'https://engine.test', apiKey: null } as never)
@@ -94,6 +163,71 @@ describe('/api/chat/foreman/engine', () => {
         expect(response.status).toBe(200)
         expect(order).toEqual(['session', 'run'])
         expect(cancelRun).toHaveBeenCalledWith(expect.anything(), expect.any(String), 'run-a')
+    })
+
+    describe('General and threads', () => {
+        beforeEach(onTheEngine)
+
+        it('makes the first conversation of a client that names no kind its General', async () => {
+            vi.mocked(findForemanGeneral).mockResolvedValue(null)
+            vi.mocked(startChat).mockResolvedValue(engineStream('engine-1', 'run-1'))
+
+            const response = await POST(post())
+
+            expect(response.headers.get('X-Session-Id')).toBe('session')
+            expect(startEngineConversation).toHaveBeenCalledWith(expect.anything(), 'session', 'engine-1', 'ship it', 'general')
+        })
+
+        it('opens a thread beside the General that exists, when no kind is named', async () => {
+            vi.mocked(findForemanGeneral).mockResolvedValue({ id: 'general', engineSessionId: 'engine-general' })
+            vi.mocked(startChat).mockResolvedValue(engineStream('engine-2', 'run-2'))
+
+            await POST(post())
+
+            expect(startEngineConversation).toHaveBeenCalledWith(expect.anything(), 'session', 'engine-2', 'ship it', 'thread')
+        })
+
+        it('continues the General someone already spoke in, whatever id the client made up for it', async () => {
+            vi.mocked(findForemanGeneral).mockResolvedValue({ id: 'general', engineSessionId: 'engine-general' })
+            vi.mocked(startChat).mockResolvedValue(engineStream('engine-general', 'run-3'))
+
+            const response = await POST(post({ kind: 'general' }))
+
+            expect(vi.mocked(startChat).mock.calls[0][2]).toMatchObject({ sessionId: 'engine-general' })
+            expect(touchForemanConversation).toHaveBeenCalledWith('general')
+            expect(startEngineConversation).not.toHaveBeenCalled()
+            expect(response.headers.get('X-Session-Id')).toBe('general')
+        })
+
+        it('starts the message over on the General another tab opened meanwhile, and stops the orphan run', async () => {
+            vi.mocked(findForemanGeneral).mockResolvedValue(null)
+            vi.mocked(startChat).mockResolvedValueOnce(engineStream('engine-orphan', 'run-orphan')).mockResolvedValueOnce(engineStream('engine-winner', 'run-winner'))
+            vi.mocked(startEngineConversation).mockRejectedValueOnce(new ForemanGeneralAlreadyOpenError({ id: 'winner', engineSessionId: 'engine-winner' }))
+
+            const response = await POST(post({ kind: 'general' }))
+
+            expect(cancelRun).toHaveBeenCalledWith(expect.anything(), expect.any(String), 'run-orphan')
+            expect(vi.mocked(startChat).mock.calls[1][2]).toMatchObject({ sessionId: 'engine-winner' })
+            expect(touchForemanConversation).toHaveBeenCalledWith('winner')
+            expect(response.headers.get('X-Session-Id')).toBe('winner')
+            expect(response.headers.get('X-Run-Id')).toBe('run-winner')
+        })
+    })
+
+    it('reopens one conversation by its id, its transcript still at the top of the answer', async () => {
+        vi.mocked(loadForemanConversationById).mockResolvedValue({ sessionId: 'thread', title: 'Gmail', backend: 'engine', kind: 'thread', messages: [], usage: null, lastError: null, activeRunId: 'run-9' })
+
+        const response = await GET(new Request(`${URL}?sessionId=thread`))
+
+        expect(await response.json()).toMatchObject({ sessionId: 'thread', kind: 'thread', messages: [], activeRunId: 'run-9' })
+    })
+
+    it('answers an empty transcript for a conversation that cannot be read', async () => {
+        vi.mocked(loadForemanConversationById).mockRejectedValue(new Error('engine asleep'))
+
+        const response = await GET(new Request(`${URL}?sessionId=thread`))
+
+        expect(await response.json()).toEqual({ messages: [] })
     })
 
     it('answers 502 when the sweep fails and no run id is left to stop', async () => {

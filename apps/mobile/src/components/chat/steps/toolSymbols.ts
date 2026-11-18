@@ -80,6 +80,7 @@ const TOOL_SYMBOLS: Record<string, IconName> = {
     mcp_login: 'link',
     mcp_login_complete: 'link',
     mcp_status: 'link',
+    mcp_search: 'search',
 
     card_table: 'database',
     card_file: 'file',
@@ -133,6 +134,7 @@ const TOOL_SYMBOLS: Record<string, IconName> = {
     open_brain_page: 'brain',
     read_attachment: 'file-search',
     search_docs: 'book',
+    rerun_hub_search_docs: 'book',
     analyze_website: 'globe',
     save_profile: 'users',
     save_needs: 'users',

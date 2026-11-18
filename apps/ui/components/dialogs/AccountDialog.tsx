@@ -1,7 +1,9 @@
 'use client'
 
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
+import { UserRoundIcon } from '@/lib/icons'
 import { useErrorText } from '@/hooks/useErrorText'
-import { resendLiveSignInCode } from '@/app/(authflow)/auth/actions'
+import { resendLiveSignInCode } from '@/app/(authflow)/(onboarding)/auth/actions'
 import {
     deleteMyAccountAction,
     getAccountDeletionStatusAction,
@@ -21,11 +23,11 @@ import { useLanguageChoice } from '@/components/account/useLanguageChoice'
 import { ProfilePanel } from '@/components/account/ProfilePanel'
 import { SignInMethodsPanel } from '@/components/account/SignInMethodsPanel'
 import { EmailCodeForm } from '@/components/auth/EmailCodeForm'
-import { DIALOG_TABS_CONTENT, DIALOG_TABS_HEADER } from '@/components/dialogs/DialogTabs'
+import { DIALOG_TABS_CONTENT } from '@/components/dialogs/DialogTabs'
 import { useLanguagePacksEnabled } from '@/components/layout/FeatureFlagsProvider'
 import { PHONE_ENABLED } from '@rerun/cloud/phone'
 import { PhoneChangeForm } from '@rerun/cloud/phone.client'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { PanelEditorBody, PanelEditorHeader, PanelEditorShell } from '@/components/ui/panel-editor'
 import { PanelSteps } from '@/components/ui/panel-steps'
 import type { AccountDeletionBlocker } from '@/lib/auth/account-deletion'
@@ -40,8 +42,12 @@ import { useBillingStore } from '@/stores/billing.store'
 import { createClient } from '@/supabase/client'
 import { useSession } from '@/supabase/session/SessionProvider'
 import { useTranslations } from 'next-intl'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { DesktopAppPanel } from '@/components/account/DesktopAppPanel'
+import { desktopShell } from '@/lib/desktop-shell/client'
 import { toast } from 'sonner'
+
+const noSubscription = () => () => {}
 
 function unwrap(result: ActionResult, errorText: ReturnType<typeof useErrorText>) {
     if (!result.ok) throw new Error(errorText(result))
@@ -258,6 +264,7 @@ const TAB_CONTENT: Record<AccountTab, () => ReactNode> = {
     profile: ProfileTab,
     'sign-in': SignInTab,
     language: LanguageTab,
+    desktop: DesktopAppPanel,
     delete: DeleteAccountTab,
 }
 
@@ -265,7 +272,8 @@ export function AccountDialog() {
     const { open, tab: requestedTab, setOpen, setTab } = useAccountStore()
     const t = useTranslations('account')
     const showLanguage = useLanguagePacksEnabled()
-    const tab = requestedTab === 'language' && !showLanguage ? 'profile' : requestedTab
+    const showDesktop = useSyncExternalStore(noSubscription, () => desktopShell('settings') !== null, () => false)
+    const tab = (requestedTab === 'language' && !showLanguage) || (requestedTab === 'desktop' && !showDesktop) ? 'profile' : requestedTab
     const { description } = useAccountTabText(tab)
     const TabContent = TAB_CONTENT[tab]
 
@@ -276,11 +284,9 @@ export function AccountDialog() {
                     tab={tab}
                     onTabChange={setTab}
                     showLanguage={showLanguage}
+                    showDesktop={showDesktop}
                     header={
-                        <DialogHeader className={DIALOG_TABS_HEADER}>
-                            <DialogTitle>{t('title')}</DialogTitle>
-                            <DialogDescription>{description}</DialogDescription>
-                        </DialogHeader>
+                        <DialogHeaderBar icon={UserRoundIcon} title={t('title')} description={description} />
                     }
                 >
                     <TabContent />

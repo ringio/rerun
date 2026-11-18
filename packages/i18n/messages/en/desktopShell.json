@@ -1,0 +1,123 @@
+{
+    "_context": {
+        "update.ready": "Toast inside the desktop app when a new version of the app was downloaded. {version} is like 0.4.0.",
+        "update.restart": "Button of that toast: restarts the desktop app to install the new version.",
+        "downloads.done": "Toast inside the desktop app when a file finished downloading. {filename} is the file name.",
+        "downloads.show": "Button of that toast: shows the file in Finder (macOS) or Explorer (Windows).",
+        "handoff.title": "Page opened in the web browser by the Rerun desktop app to sign it in. {app} is the app name (Rerun, Rerun Staging).",
+        "handoff.body": "{account} is the email address (or phone number) of the signed-in account.",
+        "handoff.codeHint": "Shown after confirming, in case the desktop app did not open by itself.",
+        "signIn.waitingTitle": "Shown in the desktop app after it opened the web browser to sign in.",
+        "signIn.codeLabel": "Label of the field where the person pastes the code shown by the browser.",
+        "settings.version": "Under the Updates row of the desktop app settings. {version} is like 0.4.0.",
+        "openInApp.title": "Toast in the web browser, offering to open the current page in the Rerun desktop app. {app} is the app name.",
+        "quickAsk.placeholder": "Placeholder of the small floating window of the desktop app where the person types a question for the Chief of Staff (the workspace assistant).",
+        "settings.quickAskHint": "{shortcut} is the keyboard shortcut, like ⌘⇧Space.",
+        "server.otherServer": "Discreet link on the sign-in page of the desktop app, for people whose company hosts Rerun itself.",
+        "settings.quickAskOff": "Helper under the Quick ask row of the desktop app settings when no keyboard shortcut is set. Quick ask is a small window to ask the Chief of Staff (the workspace assistant) from any app.",
+        "settings.shortcut.record": "Placeholder of an empty field that records a keyboard shortcut when clicked.",
+        "settings.shortcut.typing": "Shown in that field while it waits for the person to press the keys of the new shortcut.",
+        "settings.shortcut.recordingHint": "Under that field while recording. Esc and ⌫ are the keyboard keys Escape and Backspace.",
+        "settings.shortcut.change": "Accessible label of the field. {keys} is the current shortcut, like ⇧ ⌘ Space.",
+        "settings.shortcut.needsModifier": "Error under the field when the shortcut has no modifier key. {key} is ⌘ on a Mac, Ctrl elsewhere.",
+        "settings.shortcut.reserved": "Error under the field. {keys} is the shortcut, like ⌘ Space. {owner} names what already uses it on the computer.",
+        "settings.shortcut.taken": "Error under the field when another app already uses the shortcut. {keys} is like ⌃ ⌥ K.",
+        "quickAsk.holdToTalk": "Hint in the Quick ask window, next to 'Enter to send, Esc to close'. <key>Space</key> is drawn as a keyboard key with a microphone.",
+        "quickAsk.releaseToSend": "Shown while the Quick ask window records the person's voice, with Space held down.",
+        "quickAsk.sent": "Badge shown for a second once the spoken question left for the Chief of Staff (the workspace assistant).",
+        "quickAsk.micDeniedBody": "The computer does not let Rerun use the microphone. A button next to it opens the system settings.",
+        "quickAsk.toggleHint": "Shown while the Quick ask window records the person's voice after the voice keyboard shortcut was pressed."
+    },
+    "update": {
+        "ready": "Rerun {version} is ready",
+        "description": "Restart the app to use the new version.",
+        "restart": "Restart"
+    },
+    "downloads": {
+        "done": "Downloaded {filename}",
+        "failed": "Couldn’t download {filename}",
+        "show": "Show in folder"
+    },
+    "handoff": {
+        "title": "Sign in to {app}",
+        "body": "Continue to {app} as {account}?",
+        "continue": "Continue",
+        "switchAccount": "Use another account",
+        "doneTitle": "Back to {app}",
+        "doneBody": "{app} finishes signing in on its own. You can close this tab.",
+        "codeHint": "If {app} did not open, paste this code into it:",
+        "copyCode": "Copy the code",
+        "failed": "Couldn’t sign the app in. Try again.",
+        "invalidTitle": "This link has expired",
+        "invalidBody": "Start the sign-in again from the desktop app."
+    },
+    "signIn": {
+        "waitingTitle": "Continue in your browser",
+        "waitingBody": "Sign in in the browser window that opened, then come back here.",
+        "reopen": "Open the browser again",
+        "pasteCode": "Paste a code instead",
+        "codeLabel": "Code from the browser",
+        "submit": "Sign in",
+        "back": "Back",
+        "errors": {
+            "expired": "This code has expired. Start again.",
+            "invalid": "This code isn’t valid. Start again.",
+            "state-mismatch": "This sign-in was started from another window. Start again.",
+            "network": "Couldn’t reach Rerun. Check your connection.",
+            "cancelled": "The sign-in was cancelled."
+        }
+    },
+    "settings": {
+        "openAtLogin": "Open at login",
+        "openAtLoginMac": "Rerun starts with your Mac, in the menu bar.",
+        "openAtLoginOther": "Rerun starts with your computer, in the notification area.",
+        "closeToTray": "Keep running when closed",
+        "closeToTrayHint": "Closing the window leaves Rerun in the notification area, so notifications still arrive.",
+        "updates": "Updates",
+        "version": "Rerun {version}",
+        "checking": "Checking for updates…",
+        "downloading": "Downloading the update… {percent}%",
+        "updateFailed": "Couldn’t check for updates.",
+        "check": "Check for updates",
+        "restart": "Restart to update to {version}",
+        "quickAsk": "Quick ask",
+        "quickAskHint": "{shortcut} opens a field for your Chief of Staff from any app.",
+        "quickAskOn": "Opens a field for your Chief of Staff from any app.",
+        "quickAskOff": "Off. Record a shortcut to turn it on.",
+        "shortcut": {
+            "record": "Record shortcut",
+            "typing": "Type a shortcut",
+            "tryAnother": "Try another",
+            "recordingHint": "Esc cancels, ⌫ turns it off",
+            "change": "Shortcut {keys}, click to change",
+            "needsModifier": "Add a modifier key, like {key}",
+            "reserved": "{keys} is used by {owner, select, spotlight {Spotlight} finder {Finder search} inputSources {input sources} appSwitcher {the app switcher} screenshot {screenshots} windowMenu {the window menu} system {the system} other {every app}}",
+            "taken": "{keys} is used by another app"
+        },
+        "quickAskVoice": "Voice quick ask",
+        "quickAskVoiceOn": "Talk to your Chief of Staff from any app."
+    },
+    "openInApp": {
+        "title": "Open this page in {app}?",
+        "open": "Open"
+    },
+    "quickAsk": {
+        "placeholder": "Ask your Chief of Staff…",
+        "hint": "Enter to send, Esc to close",
+        "send": "Send",
+        "holdToTalk": "Hold <key>Space</key> to talk",
+        "releaseToSend": "Release to send, Esc to cancel",
+        "sent": "Sent to your Chief of Staff",
+        "nothingHeard": "Nothing heard. Hold Space and talk.",
+        "transcriptionFailed": "Couldn’t turn that into text. Try again, or type.",
+        "micDeniedTitle": "Rerun can’t hear you",
+        "micDeniedBody": "Allow the microphone for Rerun in your system settings.",
+        "openSettings": "Open Settings",
+        "typeInstead": "Type instead",
+        "toggleHint": "Enter to send, Esc to cancel",
+        "cancel": "Cancel"
+    },
+    "server": {
+        "otherServer": "Use another Rerun server"
+    }
+}

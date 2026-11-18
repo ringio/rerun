@@ -141,8 +141,86 @@ export function problemsOf({ key, source, translation, locale, glossary }) {
     if (expected !== actual) problems.push(`${key}: placeholders differ (source: ${expected || 'none'}, ${locale}: ${actual || 'none'})`)
     if (/\b(plural|select|selectordinal)\b/.test(source) && !/\bother\s*\{/.test(translation)) problems.push(`${key}: plural or select without an "other" branch`)
     if (DASHES.test(translation)) problems.push(`${key}: contains an em or en dash`)
+    const lengthProblem = metaLengthProblem(key, translation)
+    if (lengthProblem) problems.push(lengthProblem)
     for (const term of glossary.keep ?? []) {
         if (new RegExp(`\\b${term}\\b`).test(source) && !translation.includes(term)) problems.push(`${key}: "${term}" must stay as written`)
+    }
+    return problems
+}
+
+// The keys that become a page's <title> on rerun.build. In English they are written in headline case,
+// as the home page always was; the other languages keep the sentence case of their own usage.
+const PAGE_TITLE_KEYS = [
+    /^landing[A-Za-z]+\.(.+\.)?metaTitle$/,
+    /^landing(Industries|Compare)\.hub\.title$/,
+    /^landingPricing\.(lifetime\.)?seo\.title$/,
+    /^landingDownload\.title$/,
+    /^landing(Community|Resources)\.metadata\.(.+\.)?title$/,
+    /^landingCommon\.site\.title$/,
+]
+
+export function isPageTitleKey(id) {
+    return PAGE_TITLE_KEYS.some(pattern => pattern.test(id))
+}
+
+const META_DESCRIPTION_KEYS = [
+    /^landing[A-Za-z]+\.(.+\.)?metaDescription$/,
+    /^landing(Features|Industries|Compare)\.hub\.description$/,
+    /^landingPricing\.(lifetime\.)?seo\.description$/,
+    /^landingDownload\.description$/,
+    /^landing(Community|Resources)\.metadata\.(.+\.)?description$/,
+    /^landingCommon\.site\.description$/,
+]
+
+// Google cuts a result title around 60 characters and a snippet around 155 (SEO_DESCRIPTION_MAX_LENGTH
+// of @rerun/contracts): past that, a language reads with an ellipsis where English does not.
+const PAGE_TITLE_MAX_LENGTH = 60
+const META_DESCRIPTION_MAX_LENGTH = 155
+
+function metaLimitOf(id) {
+    if (isPageTitleKey(id)) return { what: 'page title', max: PAGE_TITLE_MAX_LENGTH }
+    if (META_DESCRIPTION_KEYS.some(pattern => pattern.test(id))) return { what: 'meta description', max: META_DESCRIPTION_MAX_LENGTH }
+    return null
+}
+
+// An argument counts as the few characters its value takes on the page ({price} is "$29").
+export function renderedLength(message) {
+    return message.replace(/\{[^{}]*\}/g, 'XXXX').length
+}
+
+export function metaLengthProblem(id, message) {
+    const limit = metaLimitOf(id)
+    if (!limit || renderedLength(message) <= limit.max) return null
+    return `${id}: ${renderedLength(message)} characters, a ${limit.what} takes ${limit.max} at most`
+}
+
+export function metaLengthNote(id) {
+    const limit = metaLimitOf(id)
+    return limit ? `Shown in search results: ${limit.max} characters at most, arguments counted as 4.` : null
+}
+
+// The short function words may stay lowercase ("Agents for Agencies", "Reports with AI"), unless
+// they open the title or follow a colon; a phrasal particle takes its capital ("Clean Up").
+const MINOR_WORDS = new Set(['a', 'an', 'the', 'and', 'but', 'or', 'nor', 'for', 'so', 'yet', 'as', 'at', 'by', 'in', 'of', 'off', 'on', 'per', 'to', 'up', 'via', 'vs', 'with', 'from', 'into', 'onto', 'over', 'than'])
+const LOWERCASE_NAMES = new Set(['n8n', 'iOS', 'macOS'])
+
+// The words of an English page title left in sentence case, empty when it is in headline case. A
+// hyphenated word is judged by its first part, so "E-commerce" and "Step-by-Step" both pass.
+export function headlineCaseProblems(title) {
+    const words = title
+        .replace(/\{[^{}]*\}/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean)
+    const problems = []
+    let opensClause = true
+    for (const raw of words) {
+        const word = raw.replace(/^[("'“]+|[)"'”.,:;!?]+$/g, '')
+        const startsClause = opensClause
+        opensClause = /[:?!]$/.test(raw)
+        if (!/^[a-z]/.test(word) || LOWERCASE_NAMES.has(word)) continue
+        const lead = word.split('-')[0]
+        if (startsClause || !MINOR_WORDS.has(lead)) problems.push(raw)
     }
     return problems
 }

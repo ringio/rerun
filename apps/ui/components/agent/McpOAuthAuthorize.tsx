@@ -6,6 +6,7 @@ import { useOAuthPopupResult } from '@/hooks/useOAuthPopupResult'
 import { usePopupClosePoll } from '@/hooks/usePopupClosePoll'
 import { CheckCircle2Icon, ExternalLinkIcon, Loader2Icon, XCircleIcon } from '@/lib/icons'
 import { useTranslations } from 'next-intl'
+import { desktopServiceSignInAvailable, signInThroughBrowser } from '@/lib/desktop-shell/service-sign-in'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 const RESULT_TYPES = ['mcp-oauth-success', 'mcp-oauth-error'] as const
@@ -14,10 +15,15 @@ type McpOAuthAuthorizeProps = {
     url: string
     agentId: string
     serverName: string
+    // The registry key when the server is a catalog app; absent for a server added by hand.
+    serviceKey?: string
     onAuthorized: () => void
     // Starts the sign-in at mount, in the window the caller opened inside its click handler.
     autoStart?: boolean
     pendingPopup?: Window | null
+    // Signs in a Vault entry rather than a coworker's own server: the token lands on the entry, for
+    // every coworker using it, and `agentId` is ignored.
+    vaultItemId?: string
 }
 
 type OAuthState = 'idle' | 'discovering' | 'ready' | 'authorizing' | 'authorized' | 'error'
@@ -27,7 +33,7 @@ type DiscoveryResult = {
     clientInfo: Record<string, unknown> | null
 }
 
-export function McpOAuthAuthorize({ url, agentId, serverName, onAuthorized, autoStart, pendingPopup }: McpOAuthAuthorizeProps) {
+export function McpOAuthAuthorize({ url, agentId, serverName, serviceKey, onAuthorized, autoStart, pendingPopup, vaultItemId }: McpOAuthAuthorizeProps) {
     const t = useTranslations('agent.mcpOAuthAuthorize')
     const [state, setState] = useState<OAuthState>('idle')
     const [error, setError] = useState<string | null>(null)
@@ -76,16 +82,25 @@ export function McpOAuthAuthorize({ url, agentId, serverName, onAuthorized, auto
         if (!discovery) return
         setState('authorizing')
         setError(null)
+        // The desktop app's browser hand-off names a coworker; a Vault entry signs in through the popup.
+        if (!vaultItemId && desktopServiceSignInAvailable()) {
+            const target = serviceKey ? { agentId, key: serviceKey } : { agentId, server: serverName }
+            const result = await signInThroughBrowser(target, t('authorizationFailed'))
+            if (result.ok) {
+                setState('authorized')
+                onAuthorized()
+            } else {
+                setError(result.error)
+                setState('error')
+            }
+            return
+        }
         armResult()
         try {
             const res = await fetch('/api/mcp/oauth/start', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    agentId,
-                    serverName,
-                    mcpUrl: url,
-                }),
+                body: JSON.stringify(vaultItemId ? { vaultItemId, serverName, mcpUrl: url } : { agentId, serverName, mcpUrl: url }),
             })
             const data = await res.json()
             if (!res.ok) throw new Error(data.error || t('startFailed'))
@@ -111,7 +126,7 @@ export function McpOAuthAuthorize({ url, agentId, serverName, onAuthorized, auto
 
     const autoStartedRef = useRef(false)
     useEffect(() => {
-        if (!autoStart || state !== 'ready' || autoStartedRef.current || !pendingPopup || pendingPopup.closed) return
+        if (!autoStart || state !== 'ready' || autoStartedRef.current || ((vaultItemId || !desktopServiceSignInAvailable()) && (!pendingPopup || pendingPopup.closed))) return
         autoStartedRef.current = true
         startAuth()
         // eslint-disable-next-line react-hooks/exhaustive-deps

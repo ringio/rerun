@@ -6,6 +6,7 @@ process.env.RERUN_DATA_DIR = mkdtempSync(resolve(tmpdir(), 'rerun-system-prompt-
 
 const { afterEach, describe, expect, it, vi } = await import('vitest')
 const { agentConfigSchema } = await import('@rerun/contracts')
+const { SKILL_STYLE } = await import('../skills/style.js')
 const { buildSystemPrompt: buildSystemPromptBlocks, systemPromptText, currentTimeNote, nowBlock, userBlock, userLanguageBlock } = await import('./systemPrompt.js')
 
 // The tests read the prompt as the model does, both blocks joined.
@@ -59,6 +60,29 @@ describe('company brain section', () => {
     it('leaves the section out when the brain tools are off', async () => {
         const prompt = await buildSystemPrompt(agentWith({ brain: false }), { source: 'chat' })
         expect(prompt).not.toContain('<company_brain>')
+    })
+})
+
+describe('Rerun documentation section', () => {
+    const docsOf = (prompt: string) => prompt.slice(prompt.indexOf('<rerun_docs>'), prompt.indexOf('</rerun_docs>'))
+
+    it('sends a question about Rerun to the documentation, with the link and never from memory', async () => {
+        const docs = docsOf(await buildSystemPrompt(agentWith({ hub: true, web: true }), { source: 'chat' }))
+        expect(docs).toContain('call rerun_hub_search_docs and give the user the link')
+        expect(docs).toContain('Never answer one of those from memory')
+        expect(docs).toContain('web_fetch on its docs.rerun.build link')
+    })
+
+    it('does not point at web_fetch when the web tools are off', async () => {
+        const docs = docsOf(await buildSystemPrompt(agentWith({ hub: true, web: false }), { source: 'chat' }))
+        expect(docs).toContain('rerun_hub_search_docs')
+        expect(docs).not.toContain('web_fetch')
+    })
+
+    it('leaves the section out when the hub tools are off', async () => {
+        const prompt = await buildSystemPrompt(agentWith({ hub: false }), { source: 'chat' })
+        expect(prompt).not.toContain('<rerun_docs>')
+        expect(prompt).not.toContain('rerun_hub_search_docs')
     })
 })
 
@@ -127,6 +151,7 @@ describe('skills section', () => {
         expect(prompt).toContain('<skills>')
         expect(prompt).toContain('You have no skill yet')
         expect(prompt).toContain('Never write a skill on your own initiative')
+        expect(prompt).toContain(SKILL_STYLE)
     })
 
     it('sends the capture through the inline proposal, never through a question', async () => {
@@ -165,6 +190,13 @@ describe('skills section', () => {
         expect(prompt).toContain('propose nothing and keep building')
         expect(prompt).toContain('one skill_propose call that carries the whole flow as it ended up')
         expect(prompt).toContain('never one call per step')
+    })
+
+    it('keeps a proposal short and decidable from its title and summary', async () => {
+        const prompt = await buildSystemPrompt(agentWith({ skills: true }), { source: 'chat' })
+        expect(prompt).toContain('as short numbered steps')
+        expect(prompt).toContain('with no context and no why')
+        expect(prompt).toContain('The user decides from the title and the summary alone')
     })
 
     it('says the same thing whether or not anyone is watching the run', async () => {
@@ -219,6 +251,16 @@ describe('current time', () => {
 
     it('carries the exact timestamp in the turn block', () => {
         expect(nowBlock(new Date('2026-08-16T14:32:07Z'))).toBe('<now>\n2026-08-16T14:32:07Z (Sunday, 16 August 2026, 14:32 UTC)\n</now>')
+    })
+
+    // A routine written in English by a French team still reports in French; without a workspace
+    // language the run keeps the language of its instruction, as before.
+    it('falls back on the workspace language for a run nobody started', async () => {
+        const french = { ...agent, config: agentConfigSchema.parse({ name: 'Prompt test', provider: 'rerun', language: 'fr', tools: { memory: false, db: false, schedule: false } }) }
+        expect(await buildSystemPrompt(french, { source: 'schedule', slug: 'daily', name: 'daily' })).toContain('and failing that French, the language of this workspace')
+        expect(await buildSystemPrompt(agent, { source: 'schedule', slug: 'daily', name: 'daily' })).toContain('and failing that the language its instruction is written in.')
+        const { stable } = await buildSystemPromptBlocks(french, { source: 'chat' })
+        expect(stable).toContain('French, the language of this workspace')
     })
 
     it('names the language of the user in the turn block of an install, and adds nothing without one', () => {
@@ -332,11 +374,29 @@ describe('buildSystemPrompt sub-agent rules', () => {
     })
 })
 
+describe('keeping the user posted', () => {
+    it('asks a coworker someone is chatting with for an opening line and short progress lines', async () => {
+        const prompt = await buildSystemPrompt(agent, { source: 'chat' })
+        const section = prompt.slice(prompt.indexOf('<keeping_the_user_posted>'), prompt.indexOf('</keeping_the_user_posted>'))
+        expect(section).toContain('Whenever you will use a tool before you can answer, your reply opens with one short sentence')
+        expect(section).toContain('whenever a phase ends')
+        expect(section).toContain('single sentence')
+        expect(section).toContain('your final message still carries the whole result')
+    })
+
+    it('leaves it out of a run nobody is waiting on', async () => {
+        expect(await buildSystemPrompt(agent, { source: 'schedule', slug: 'daily', name: 'daily' })).not.toContain('<keeping_the_user_posted>')
+        const delegate = { ...agent, config: agentConfigSchema.parse({ name: 'Prompt test delegate', provider: 'rerun', ephemeral: true, tools: { memory: false, db: false, schedule: false } }) }
+        expect(await buildSystemPrompt(delegate, { source: 'chat' })).not.toContain('<keeping_the_user_posted>')
+    })
+})
+
 describe('reporting failures', () => {
-    it('tells the agent to open its final message with what failed, and not to announce an action early', async () => {
+    it('tells the agent to open its final message with what failed, and never to claim an action done early', async () => {
         const prompt = await buildSystemPrompt(agent, { source: 'chat' })
         expect(prompt).toContain('<reporting_failures>')
         expect(prompt).toContain('your final message opens with that')
+        expect(prompt).toContain('Saying what you are about to do is fine')
         expect(prompt).toContain('before the tool call that does it has returned')
         expect(prompt).toContain('is still news to the reader')
     })

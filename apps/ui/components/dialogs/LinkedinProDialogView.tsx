@@ -1,5 +1,6 @@
 'use client'
 
+import { DialogHeaderBar } from '@/components/dialogs/DialogHeaderBar'
 import type { AppConnectionView, AppsOverview } from '@/app/api/_services/apps.service'
 import { CheckpointScreen, ConnectScreen, LINKEDIN_PRESENTATION, type ApprovalWait, type LinkedinCredentials } from '@/components/apps/LinkedinProViews'
 import { AccountsScreen, AccountsSkeleton, AppIcon, AppPageHeader, IntroScreen, SuccessScreen, connectHint } from '@/components/apps/PaidAppViews'
@@ -31,6 +32,7 @@ export type LinkedinProDialogViewProps = {
     onReconnect: (connection: AppConnectionView) => void
     onDisconnect: (connection: AppConnectionView) => void
     onAddSlot: () => void
+    onRemoveSlot: () => void
     onBack: () => void
     onSubmitCredentials: (credentials: LinkedinCredentials) => void
     onSubmitCode: (code?: string) => void
@@ -47,13 +49,7 @@ export function LinkedinProDialogView(props: LinkedinProDialogViewProps) {
         <Dialog open={open} onOpenChange={onOpenChange}>
             <PanelDialogContent className="sm:h-[min(42rem,88dvh)] sm:max-w-xl">
                 {screen.kind === 'accounts' && !intro ? (
-                    <DialogHeader className="flex-row items-center gap-3 border-b px-4 py-4 text-left">
-                        <AppIcon slug="linkedin" size="md" />
-                        <div className="min-w-0 space-y-0.5">
-                            <DialogTitle>LinkedIn Pro</DialogTitle>
-                            <DialogDescription>{t('description')}</DialogDescription>
-                        </div>
-                    </DialogHeader>
+                    <DialogHeaderBar icon={<AppIcon slug="linkedin" size="md" />} title="LinkedIn Pro" description={t('description')} />
                 ) : (
                     <DialogHeader className="sr-only">
                         <DialogTitle>LinkedIn Pro</DialogTitle>
@@ -69,9 +65,9 @@ export function LinkedinProDialogView(props: LinkedinProDialogViewProps) {
                                 {!overview ? (
                                     <AccountsSkeleton />
                                 ) : intro ? (
-                                    <IntroScreen presentation={LINKEDIN_PRESENTATION} overview={overview} pending={pending} onConnectStart={props.onConnectStart} onAddSlot={props.onAddSlot} />
+                                    <IntroScreen presentation={LINKEDIN_PRESENTATION} overview={overview} pending={pending} onConnectStart={props.onConnectStart} onAddSlot={props.onAddSlot} onRemoveSlot={props.onRemoveSlot} />
                                 ) : (
-                                    <AccountsScreen overview={overview} pending={pending} onConnectStart={props.onConnectStart} onReconnect={props.onReconnect} onDisconnect={props.onDisconnect} onAddSlot={props.onAddSlot} />
+                                    <AccountsScreen overview={overview} pending={pending} onConnectStart={props.onConnectStart} onReconnect={props.onReconnect} onDisconnect={props.onDisconnect} onAddSlot={props.onAddSlot} onRemoveSlot={props.onRemoveSlot} />
                                 )}
                             </>
                         )}

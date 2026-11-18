@@ -2,6 +2,7 @@
     "_context": {
         "close": "Accessible label of the button that closes a dialog, a sheet or a panel.",
         "chat.actionApproval.decline": "Button that refuses the action the coworker asks to run.",
+        "chat.actionApproval.explain": "Small button next to the refusal: opens a field to tell the coworker why the action is refused.",
         "chat.approval.title": "{label} is the name of the tool that asks for approval.",
         "chat.approval.responded": "{choice} is the raw choice code (once, session, always, deny), kept untranslated.",
         "chat.approval.choices.session": "Approve for the rest of this chat session.",
@@ -11,7 +12,6 @@
         "chat.reasoning.thoughtFor": "{duration} is a short elapsed time such as 12s or 1m 4s.",
         "chat.reasoning.thought": "Past tense: the model has finished thinking.",
         "chat.secret.storedAs": "{key} is the name of the environment variable the value is stored under.",
-        "chat.skillProposal.question": "The coworker proposes to remember a rule it noticed.",
         "chat.skillProposal.no": "Button that refuses to remember the rule.",
         "chat.table.groupedBy": "{column} is the name of the database column a kanban board is grouped by.",
         "chat.table.more": "Under a kanban column: how many more cards are not shown.",
@@ -37,6 +37,7 @@
         "inbox.sections.headsUps": "Section of notifications a coworker flagged for you to read.",
         "inbox.sentences.awaiting_question": "{agent} is the coworker's name.",
         "inbox.pillLabel": "Accessible label of the notifications pill. {summary} is a short count such as 2 need you · 1 done.",
+        "inbox.needsYouRow": "Row at the top of the list of coworkers that opens the notifications the person has to handle, followed by their count. Keep it short.",
         "inbox.needsYouCount": "How many notifications need the user.",
         "inbox.doneRich": "<b> wraps the number.",
         "inbox.running": "<n> wraps the number. Tasks being run by coworkers right now.",
@@ -82,6 +83,7 @@
             "previous": "Previous approval",
             "next": "Next approval",
             "decline": "Not now",
+            "explain": "Explain",
             "approve": "Approve",
             "approved": "Approved"
         },
@@ -144,7 +146,6 @@
             "retry": "Retry",
             "dismiss": "Dismiss",
             "notRemembered": "Not remembered",
-            "question": "Remember this?",
             "remember": "Remember",
             "no": "No",
             "view": "View",
@@ -184,7 +185,6 @@
     },
     "experts": {
         "wizard": {
-            "step": "Step {step}",
             "steps": {
                 "identity": {
                     "title": "Your identity",
@@ -421,6 +421,7 @@
         "noUpdates": "No updates",
         "pillLabel": "Notifications: {summary}",
         "pillLabelEmpty": "Notifications: no updates",
+        "needsYouRow": "Needs you",
         "needsYouCount": "{count, plural, one {# needs you} other {# need you}}",
         "doneCount": "{count, plural, other {# done}}",
         "needsYouRich": "{count, plural, one {<b>#</b> needs you} other {<b>#</b> need you}}",

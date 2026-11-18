@@ -70,7 +70,7 @@ import { browserPermission } from '@/lib/notifications/browser'
 import { modelContextWindow } from '@/lib/engine/models'
 import { rerunCreditOf } from '@/lib/engine/ai-sources'
 import { toGroup } from '@/lib/engine/model-groups'
-import { isLifetimePlan, isPremiumModelEntitled } from '@rerun/cloud/billing'
+import { isClaudePlanOffered, isLifetimePlan } from '@rerun/cloud/billing'
 import { createClient } from '@/supabase/client'
 import { selectMaybeSingle } from '@/supabase/supabase-helpers'
 import { useChat } from '@ai-sdk/react'
@@ -101,6 +101,8 @@ type AgentChatProps = {
     agentId: string
     agentName: string
     sessionId: string | null
+    // The conversation to show is still being looked up (General's): its history is on its way, not empty.
+    sessionPending?: boolean
     onSessionCreated: (id: string) => void
     initialRunId?: string | null
     // Bumped each time the conversation is opened from somewhere else (a notification, the inbox):
@@ -130,7 +132,7 @@ type AgentChatProps = {
     composerPlaceholder?: string
 }
 
-export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessionCreated, initialRunId, arrival = 0, mentionAgents = [], mentionSkills = [], sessionWorking = false, sessionIdle = false, alertPending = false, body, header, suppressEmptyState = false, setup, onSetupSkipped, onOpenInstall, onRunFinished, onSessionInserted, onSessionStatusChange, onMessageSent, onNewConversation, threads, onOpenThread, composerPlaceholder }: AgentChatProps) {
+export function AgentChat({ uid, active, agentId, agentName, sessionId, sessionPending = false, onSessionCreated, initialRunId, arrival = 0, mentionAgents = [], mentionSkills = [], sessionWorking = false, sessionIdle = false, alertPending = false, body, header, suppressEmptyState = false, setup, onSetupSkipped, onOpenInstall, onRunFinished, onSessionInserted, onSessionStatusChange, onMessageSent, onNewConversation, threads, onOpenThread, composerPlaceholder }: AgentChatProps) {
     const t = useTranslations('chat.agentChat')
     const tHitlCue = useTranslations('chat.hitlCue')
     const { workspace, user } = useSession()
@@ -460,6 +462,7 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
 
     const [historyLoading, setHistoryLoading] = useState(false)
     const historyLoadedRef = useRef<string | null>(null)
+    const [historyReadFor, setHistoryReadFor] = useState<string | null>(null)
     // The session whose snapshot is on its way: it answers the active-run question too, so the
     // separate lookup below waits for it instead of racing it.
     const [snapshotPendingFor, setSnapshotPendingFor] = useState<string | null>(null)
@@ -512,9 +515,13 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
             .catch(() => {})
             .finally(() => {
                 setHistoryLoading(false)
+                setHistoryReadFor(sessionId)
                 setSnapshotPendingFor(null)
             })
     }, [active, sessionId, messages.length, setMessages, initialRunId, showReplayedRunError])
+    // From the first frame a conversation is on screen, not once the effect above has asked for its
+    // history: the empty state would flash in between, as if the conversation had nothing in it.
+    const historyAwaited = historyLoading || (messages.length === 0 && (sessionPending || (active && !!sessionId && !initialRunId && historyReadFor !== sessionId)))
 
     const reconnecting = useRunReconnect({
         error,
@@ -528,7 +535,9 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
                 getRun: () => getRunAction(agentId, runId),
                 fetchMessages: () => fetchSessionMessages(sid),
                 onSettled: async ({ errored, errorText }) => {
-                    await finalizeSessionAction(sid, errored ? 'error' : 'idle').catch(() => {})
+                    // The run's end belongs to the engine's notification: a run that stopped on a card has
+                    // already put the session in `awaiting_*`, and settling here must not close that card.
+                    await finalizeSessionAction(sid, errored ? 'error' : 'idle', { onlyWhileWorking: true }).catch(() => {})
                     activeRunIdRef.current = null
                     if (errorText) setRunError(errorText)
                 },
@@ -724,7 +733,6 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
         const own = connections.filter(connection => connection.connected && connection.id !== RERUN_CONNECTION_ID)
         return own.find(connection => connection.id === boxDefault?.connectionId) ?? own[0] ?? null
     }, [connections, boxDefault])
-    const premiumAllowed = !workspace || isPremiumModelEntitled(workspace)
     const tConnections = useTranslations('connections')
     const runOnOwnConnection = useMemo(() => {
         if (!ownConnection) return undefined
@@ -732,12 +740,12 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
             track('connection_cta_clicked', { source: 'budget_notice_use_connection' })
             // The Box default is resolved by the engine on every run, so following it beats freezing it.
             if (boxDefault?.connectionId === ownConnection.id) selectModel({})
-            else selectModel({ connectionId: ownConnection.id, model: toGroup(ownConnection, premiumAllowed, tConnections).defaultModel })
+            else selectModel({ connectionId: ownConnection.id, model: toGroup(ownConnection, tConnections).defaultModel })
             setRunError(null)
             clearError()
         }
         return { label: ownConnection.name, provider: ownConnection.provider, onUse }
-    }, [ownConnection, boxDefault, premiumAllowed, tConnections, selectModel, clearError])
+    }, [ownConnection, boxDefault, tConnections, selectModel, clearError])
     const connectProvider = useCallback(
         (provider: 'claude' | 'codex') => {
             track('connection_cta_clicked', { source: `budget_notice_${provider}` })
@@ -906,7 +914,8 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
     const lastAssistant = messages.findLastIndex(message => message.role === 'assistant')
     const timeBreaks = useMemo(() => timeBreaksOf(messageTimes), [messageTimes])
     const threadRows = useMemo(() => threadsByMessage(messageTimes, threads ?? []), [messageTimes, threads])
-    const threadBranches = (rows: ThreadRow[] | undefined) => rows?.map(thread => <ThreadBranch key={thread.id} thread={thread} onOpen={() => onOpenThread?.(thread.id, thread.title)} />)
+    const threadOwner = useMemo(() => ({ agentId, agentName }), [agentId, agentName])
+    const threadBranches = (rows: ThreadRow[] | undefined) => rows?.map(thread => <ThreadBranch key={thread.id} thread={thread} owner={threadOwner} onOpen={() => onOpenThread?.(thread.id, thread.title)} />)
     const authorTurns = useMemo(() => splitTurnsAtBreaks(authorTurnsOf(messages), timeBreaks), [messages, timeBreaks])
     const authorIds = useMemo(() => [...new Set(authorTurns.flatMap(turn => (turn.authorId ? [turn.authorId] : [])))], [authorTurns])
     const profileOf = useMemberProfiles(workspace?.id, authorIds)
@@ -964,10 +973,10 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
                 conversation in front of the user. Only a reply being written is followed smoothly. */}
             <Conversation className="flex-1" contextRef={conversationRef} initial="instant" resize={status === 'streaming' || status === 'submitted' ? 'smooth' : 'instant'}>
                 <div className="h-full" style={{ maskImage: scrollMask, WebkitMaskImage: scrollMask }}>
-                    <ConversationContent>
-                        {historyLoading && <SkeletonChat className="py-2" />}
-                        {threadRows.leading.length > 0 && !historyLoading && <div className="flex flex-col gap-3">{threadBranches(threadRows.leading)}</div>}
-                        {messages.length === 0 && threadRows.leading.length === 0 && !suppressEmptyState && !historyLoading && !showInstallGate && (
+                    <ConversationContent className="mx-auto w-full max-w-[var(--chat-column,none)]">
+                        {historyAwaited && <SkeletonChat className="py-2" />}
+                        {threadRows.leading.length > 0 && !historyAwaited && <div className="flex flex-col gap-3">{threadBranches(threadRows.leading)}</div>}
+                        {messages.length === 0 && threadRows.leading.length === 0 && !suppressEmptyState && !historyAwaited && !showInstallGate && (
                             <ConversationEmptyState>
                                 <AgentBuddy agentId={agentId} mood={buddyMood} size={96} />
                                 <div className="space-y-1">
@@ -1036,7 +1045,7 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
                         })}
                         {pendingHitl && pendingHitl.kind !== 'takeover' && (
                             <motion.div key={pendingHitl.toolCallId} ref={pendingHitlRef} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}>
-                                {pendingHitl.kind === 'question' && <QuestionForm inline ref={questionFormRef} agentId={agentId} questions={pendingQuestions(pendingHitl.input)} onSend={text => sendMessage({ text })} onCancel={() => dismissHitl(pendingHitl.toolCallId)} textareaRef={inputRef} textareaProps={mentionTextareaProps} />}
+                                {pendingHitl.kind === 'question' && <QuestionForm inline ref={questionFormRef} target={{ kind: 'agent', agentId }} questions={pendingQuestions(pendingHitl.input)} onSend={text => sendMessage({ text })} onCancel={() => dismissHitl(pendingHitl.toolCallId)} textareaRef={inputRef} textareaProps={mentionTextareaProps} />}
                                 {pendingHitl.kind === 'approval' && <ActionApprovalBlock inline approvals={pendingApprovals(pendingHitl.input)} onSubmit={decisions => sendMessage({ text: serializeApprovalDecisions(decisions) })} />}
                                 {pendingHitl.kind === 'secret' && agentId && <SecretRequestBlock inline agentId={agentId} sessionId={sessionId ?? null} secrets={pendingSecrets(pendingHitl.input)} reason={typeof pendingHitl.input.reason === 'string' ? pendingHitl.input.reason : undefined} onDone={summary => sendMessage({ text: summary })} onSkip={() => sendMessage({ text: HITL_CANCELLED.secret })} onDismiss={() => dismissHitl(pendingHitl.toolCallId)} />}
                                 {pendingHitl.kind === 'spend' && <SpendRequestBlock input={pendingHitl.input} output={pendingHitl.output} onSubmit={decision => void submitSpend(decision)} />}
@@ -1063,13 +1072,13 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
                             <Message from="assistant">
                                 {/* Paid data only runs on Rerun credit: connecting a Claude or ChatGPT plan would not buy it. */}
                                 <MessageContent>
-                                    <BudgetExhaustedNotice trialing={workspace?.subscription_status === 'trialing' || resumeAfterUpgrade} paused={!!workspace?.rerun_credit_paused_at} noCredit={rerunCredit.budgetMicros === 0} lifetime={isLifetimePlan(workspace)} {...trialUpgrade} />
+                                    <BudgetExhaustedNotice trialing={workspace?.subscription_status === 'trialing' || resumeAfterUpgrade} paused={!!workspace?.rerun_credit_paused_at} noCredit={rerunCredit.budgetMicros === 0} lifetime={isLifetimePlan(workspace)} claudePlanOffered={isClaudePlanOffered(workspace)} {...trialUpgrade} />
                                 </MessageContent>
                             </Message>
                         )}
                         {displayedError !== null && errorKind !== null && (
                             <Message from="assistant">
-                                <MessageContent>{errorKind === 'budget' ? <BudgetExhaustedNotice onConnectProvider={connectProvider} ownConnection={runOnOwnConnection} trialing={workspace?.subscription_status === 'trialing' || resumeAfterUpgrade} paused={!!workspace?.rerun_credit_paused_at} noCredit={rerunCredit.budgetMicros === 0} lifetime={isLifetimePlan(workspace)} {...trialUpgrade} /> : <ProviderErrorNotice kind={errorKind} message={displayedError} onSwitchModel={switchModel} onReconnect={reconnectProvider} onStopRun={handleStop} onContinue={continueInterruptedRun} onRetry={canRetry ? retryLastTurn : undefined} onNewConversation={onNewConversation} />}</MessageContent>
+                                <MessageContent>{errorKind === 'budget' ? <BudgetExhaustedNotice onConnectProvider={connectProvider} ownConnection={runOnOwnConnection} trialing={workspace?.subscription_status === 'trialing' || resumeAfterUpgrade} paused={!!workspace?.rerun_credit_paused_at} noCredit={rerunCredit.budgetMicros === 0} lifetime={isLifetimePlan(workspace)} claudePlanOffered={isClaudePlanOffered(workspace)} {...trialUpgrade} /> : <ProviderErrorNotice kind={errorKind} message={displayedError} onSwitchModel={switchModel} onReconnect={reconnectProvider} onStopRun={handleStop} onContinue={continueInterruptedRun} onRetry={canRetry ? retryLastTurn : undefined} onNewConversation={onNewConversation} />}</MessageContent>
                             </Message>
                         )}
                     </ConversationContent>
@@ -1080,7 +1089,7 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
 
             {mentionMenu && <div className="absolute inset-x-3" style={{ top: mentionMenuTop }}>{mentionMenu}</div>}
             {footerVisible && (
-                <div className="border-t border-border p-3">
+                <div className="border-t border-border p-3 *:mx-auto *:max-w-[var(--chat-column,none)]">
                     <AnimatePresence initial={false}>
                         {pendingAlert && (
                             <motion.div key="alert" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }} className="overflow-hidden">
@@ -1118,7 +1127,7 @@ export function AgentChat({ uid, active, agentId, agentName, sessionId, onSessio
                         ) : (
                             <motion.div key="composer" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }} className="overflow-hidden pb-px">
                                 <ChatComposer ref={composerRef} uid={uid} active={active} placeholder={composerPlaceholder} uploadTarget={uploadTarget} status={status} busy={showLoader} onSend={text => sendMessage({ text })} onSent={() => onMessageSentRef.current?.()} onStop={handleStop} onUploadingChange={setUploading} queue={{ text: queued?.text ?? null, pending: stopping, enqueue: enqueueFromComposer, onSendNow: () => void sendQueuedNow(), onDiscard: clearQueued }} gate={{ ready: modelReady, onBlocked: blockSend, hint: modelHint }} modelSlot={<ModelSelector agentId={agentId} pickerKey={uid} onReadyChange={setModelReady} onOwnConnectionChange={setHasOwnConnection} onConnectionChange={setActiveConnectionId} onRefusedModelChange={setRefusedModel} />} contextSlot={contextStats && <Context usedTokens={contextStats.used} maxTokens={contextStats.max ?? modelContextWindow(contextStats.model, contextStats.provider)} usage={contextStats.usage} modelId={contextStats.model} />} textareaRef={inputRef} textareaProps={mentionTextareaProps} mentionTokens={mentionTokens} />
-                                <ComposerSubscriptionCta open={!hasOwnConnection} onClick={connectSubscription} />
+                                <ComposerSubscriptionCta open={!hasOwnConnection} claudePlanOffered={isClaudePlanOffered(workspace)} onClick={connectSubscription} />
                             </motion.div>
                         )}
                     </AnimatePresence>

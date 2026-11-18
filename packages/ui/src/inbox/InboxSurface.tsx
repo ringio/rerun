@@ -1,15 +1,18 @@
 'use client'
 
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { memo, startTransition, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ComponentType, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
+import { memo, startTransition, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ComponentType, type KeyboardEvent, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 
 import { BorderBeam } from '../BorderBeam'
 import { CHROME_SIZE, ChromePill } from '../chrome/ChromeSurface'
 import { cn } from '../cn'
+import { Popover, PopoverAnchor, PopoverContent } from '../forms'
 import { BellIcon, CheckCheckIcon, InboxIcon, Loader2Icon } from '../icons'
 import { Button, Chip, EmptyState, useScrollFade } from '../primitives'
 import { useKitTranslations, useUiLocale } from '../locale'
 import type { KitTranslator } from '../kit-translator'
+import { AnimatedSize, StepTransition, useStepDirection } from '../steps'
 import { shortRelativeTime } from '../time'
 import { TooltipDisabledReason, TooltipLabeled } from '../Tooltip'
 import { AgentBuddy } from '../iso-grid/components/buddy/AgentBuddy'
@@ -62,6 +65,10 @@ const LIST_MIN_HEIGHT = 160
 const LIST_MAX_HEIGHT = 576
 // Header, chips and footer of the card, plus the corner row it rises from.
 const LIST_CHROME_HEIGHT = 224
+// More than the tallest list shows: the rest of the rows mount once the card is on screen.
+const FIRST_SCREEN_ROWS = 12
+// Past the row's drop and the pill's spring, the two ways the card opens.
+const REST_OF_ROWS_DELAY_MS = 300
 const DRAG_THRESHOLD = 3
 const KEYBOARD_RESIZE_STEP = 32
 
@@ -104,7 +111,11 @@ export type InboxSurfaceProps<T extends InboxEntry> = {
     onRowMenuOpenChange?: (open: boolean) => void
     /** When set, the card rises from the pill around this body instead of the list. */
     detail?: ReactNode
+    /** Names the detail shown: a new key slides the next one in. */
+    detailKey?: string
     detailClassName?: string
+    /** `pill`: the board's corner, the pill grows into the card. `row`: a line of a list's header, the card drops under it. */
+    trigger?: 'pill' | 'row'
 }
 
 /**
@@ -134,12 +145,15 @@ export function InboxSurface<T extends InboxEntry>({
     RowMenu,
     onRowMenuOpenChange,
     detail = null,
+    detailKey = '',
     detailClassName = 'w-[calc(100vw-2rem)] sm:w-[340px]',
+    trigger = 'pill',
 }: InboxSurfaceProps<T>) {
     const t = useKitTranslations()
     const reducedMotion = useReducedMotion()
     const cardId = useId()
     const rootRef = useRef<HTMLDivElement>(null)
+    const dropLayerRef = useRef<HTMLDivElement>(null)
     const pillRef = useRef<HTMLButtonElement>(null)
     const [pillWidth, setPillWidth] = useState(0)
     const [listEl, setListEl] = useState<HTMLDivElement | null>(null)
@@ -155,7 +169,28 @@ export function InboxSurface<T extends InboxEntry>({
     const cardOpen = open || hasDetail
     const [cardMounted, setCardMounted] = useState(cardOpen)
     if (cardOpen && !cardMounted) setCardMounted(true)
+    const dropAnchor = useDropAnchor(rootRef, trigger === 'row' && !cardOpen, cardOpen)
     const refocusPillRef = useRef(false)
+    // A card that closes keeps what it showed until it is gone: closing a detail clears it at once,
+    // and the list would otherwise slide back in and resize the card while it folds or fades out.
+    const lastShownRef = useRef({ detail, detailKey, detailClassName })
+    useLayoutEffect(() => {
+        if (cardOpen) lastShownRef.current = { detail, detailKey, detailClassName }
+    })
+    const shown = cardOpen ? { detail, detailKey, detailClassName } : lastShownRef.current
+    const showsDetail = shown.detail !== null && shown.detail !== undefined
+    const direction = useStepDirection(showsDetail ? 1 : 0)
+    const stepKey = showsDetail ? `detail:${shown.detailKey}` : 'list'
+    // Back from a detail, the list is where it was left; a card opened afresh starts at its top.
+    const listScrollRef = useRef(0)
+
+    useEffect(() => {
+        if (!cardOpen) listScrollRef.current = 0
+    }, [cardOpen])
+
+    useLayoutEffect(() => {
+        if (listEl) listEl.scrollTop = listScrollRef.current
+    }, [listEl])
 
     useEffect(() => {
         if (cardMounted || !refocusPillRef.current) return
@@ -182,10 +217,12 @@ export function InboxSurface<T extends InboxEntry>({
         return () => observer.disconnect()
     }, [])
 
+    // The row's card is a Popover, which brings its own outside click and Escape.
     useEffect(() => {
-        if (!cardOpen || keepOpen) return
+        if (trigger === 'row' || !cardOpen || keepOpen) return
         const onPointerDown = (event: globalThis.PointerEvent) => {
-            if (rootRef.current?.contains(event.target as Node)) return
+            const target = event.target as Node
+            if (rootRef.current?.contains(target) || dropLayerRef.current?.contains(target)) return
             onOpenChange(false)
         }
         const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -199,7 +236,7 @@ export function InboxSurface<T extends InboxEntry>({
             document.removeEventListener('pointerdown', onPointerDown)
             document.removeEventListener('keydown', onKeyDown)
         }
-    }, [cardOpen, keepOpen, onOpenChange])
+    }, [trigger, cardOpen, keepOpen, onOpenChange])
 
     const sections = useMemo(
         () => SECTIONS.map(section => ({ ...section, items: items.filter(i => section.statuses.includes(i.status)) })).filter(section => section.items.length > 0),
@@ -211,6 +248,7 @@ export function InboxSurface<T extends InboxEntry>({
     useEffect(() => {
         if (!listEl) return
         const onScroll = () => {
+            listScrollRef.current = listEl.scrollTop
             const nodes = Array.from(listEl.querySelectorAll<HTMLElement>('[data-section]'))
             if (nodes.length === 0) return
             const atBottom = listEl.scrollTop > 0 && listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 4
@@ -224,12 +262,19 @@ export function InboxSurface<T extends InboxEntry>({
 
     const shownSection = sections.some(section => section.key === activeSection) ? activeSection : (sections[0]?.key ?? null)
 
+    // A chip may name a section whose rows are not mounted yet: it mounts them all, then scrolls once the section is there.
+    const [pendingJump, setPendingJump] = useState<string | null>(null)
     const jumpToSection = (title: string) => {
-        const node = listEl?.querySelector<HTMLElement>(`[data-section="${title}"]`)
-        if (!listEl || !node) return
         setActiveSection(title)
-        listEl.scrollTo({ top: node.offsetTop, behavior: reducedMotion ? 'auto' : 'smooth' })
+        setPendingJump(title)
     }
+    useLayoutEffect(() => {
+        if (!pendingJump || !listEl) return
+        const node = listEl.querySelector<HTMLElement>(`[data-section="${pendingJump}"]`)
+        if (!node && sectionKey.split(',').includes(pendingJump)) return
+        setPendingJump(null)
+        if (node) listEl.scrollTo({ top: node.offsetTop, behavior: reducedMotion ? 'auto' : 'smooth' })
+    }, [pendingJump, listEl, reducedMotion, sectionKey])
 
     const clampListHeight = (height: number) => Math.min(Math.max(height, LIST_MIN_HEIGHT), Math.min(LIST_MAX_HEIGHT, window.innerHeight - LIST_CHROME_HEIGHT))
 
@@ -281,6 +326,185 @@ export function InboxSurface<T extends InboxEntry>({
     const morph = reducedMotion ? { duration: 0 } : { type: 'spring' as const, stiffness: 520, damping: 40 }
     const fade = reducedMotion ? { duration: 0 } : { duration: 0.18 }
     const folded = { width: pillWidth || 'auto', height: CHROME_SIZE, borderRadius: CHROME_SIZE / 2 }
+    const resize = reducedMotion ? { duration: 0 } : undefined
+    const stepDirection = reducedMotion ? 0 : direction
+
+    // The content fades in CSS, not with motion: inside the step's presence, which skips its first
+    // animation, a motion fade would let the content pop in at full opacity while the card unfolds.
+    const contentFade = cn('motion-reduce:animate-none motion-reduce:transition-none', cardOpen ? 'animate-in duration-200 fade-in-0' : 'opacity-0 transition-opacity duration-200')
+
+    // Its own compositor layer: rasterized once, then only moved and clipped while the card morphs around it.
+    const listBody = (
+        <div className={cn('flex flex-col will-change-transform', trigger === 'pill' && 'border-b border-border', contentFade)}>
+            {resizable && (
+                <button
+                    type="button"
+                    aria-label={t('inbox.resize')}
+                    onPointerDown={onHandlePointerDown}
+                    onPointerMove={onHandlePointerMove}
+                    onPointerUp={onHandlePointerUp}
+                    onPointerCancel={onHandlePointerUp}
+                    onClick={onHandleClick}
+                    onKeyDown={onHandleKeyDown}
+                    className="absolute top-0 left-1/2 z-10 flex h-5 w-12 -translate-x-1/2 cursor-ns-resize touch-none justify-center pt-1.5 outline-none hover:[&>span]:bg-muted-foreground/50 focus-visible:[&>span]:bg-ring"
+                >
+                    <span className={cn('h-1 w-8 rounded-full bg-muted-foreground/25 transition-colors', dragging && 'bg-muted-foreground/50')} />
+                </button>
+            )}
+
+            <div className={cn('flex items-center justify-between gap-3 px-4 pb-2', resizable ? 'pt-5' : 'pt-4')}>
+                <h2 className="text-base font-semibold text-foreground">{t('inbox.title')}</h2>
+                <div className="flex items-center gap-1.5">
+                    {!showSettings ? null : onOpenSettings ? (
+                        <Button size="sm" variant="ghost" onClick={onOpenSettings}>
+                            {t('inbox.preferences')}
+                        </Button>
+                    ) : (
+                        <TooltipDisabledReason reason={settingsDisabledReason ?? t('inbox.preferencesUnavailable')}>
+                            <Button size="sm" variant="ghost" disabled>
+                                {t('inbox.preferences')}
+                            </Button>
+                        </TooltipDisabledReason>
+                    )}
+                    {items.length === 0 ? (
+                        <TooltipDisabledReason reason={t('inbox.nothingToMark')}>
+                            <Button size="icon-sm" variant="outline" aria-label={t('inbox.markAllRead')} disabled>
+                                <CheckCheckIcon className="size-3.5" />
+                            </Button>
+                        </TooltipDisabledReason>
+                    ) : (
+                        <TooltipLabeled label={t('inbox.markAllRead')}>
+                            <Button size="icon-sm" variant="outline" aria-label={t('inbox.markAllRead')} onClick={onMarkAllRead}>
+                                <CheckCheckIcon className="size-3.5" />
+                            </Button>
+                        </TooltipLabeled>
+                    )}
+                </div>
+            </div>
+
+            {sections.length > 1 && (
+                <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+                    {sections.map(section => (
+                        <Chip key={section.key} selected={section.key === shownSection} onClick={() => jumpToSection(section.key)}>
+                            {t(`inbox.sections.${section.key}`)} <span className="ml-0.5 tabular-nums opacity-60">{section.items.reduce((sum, item) => sum + (item.count ?? 1), 0)}</span>
+                        </Chip>
+                    ))}
+                </div>
+            )}
+
+            {running.length > 0 && <RunningLine agentIds={running} />}
+
+            <div
+                ref={setListEl}
+                style={{ maxHeight: listMaxHeight, maskImage: mask, WebkitMaskImage: mask }}
+                className={cn('relative overflow-y-auto overscroll-contain px-2 pb-2', !dragging && 'transition-[max-height] duration-300 ease-out motion-reduce:transition-none')}
+            >
+                <div>
+                    {sections.length === 0 ? (
+                        <EmptyState icon={InboxIcon} title={t('inbox.empty.title')} description={t('inbox.empty.description')} className="py-8" />
+                    ) : (
+                        <InboxSections
+                            sections={sections}
+                            // Back from a detail the list is scrolled where it was left: its rows are all needed at once.
+                            startWithAllRows={listScrollRef.current > 0}
+                            revealAll={pendingJump !== null}
+                            renderRow={item => <InboxRow key={item.id} item={item} onOpen={onOpenItem} onMarkRead={onMarkRead} reason={rowReason?.(item)} Menu={RowMenu} onMenuOpenChange={onRowMenuOpenChange} />}
+                        />
+                    )}
+                </div>
+            </div>
+        </div>
+    )
+
+    if (trigger === 'row') {
+        const needs = items.filter(item => item.status !== 'done').length
+        const dropped = reducedMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }
+        return (
+            <Popover open={cardOpen} onOpenChange={next => !next && onOpenChange(false)}>
+                <PopoverAnchor asChild>
+                    <div ref={rootRef} className="relative">
+                        <button
+                            ref={pillRef}
+                            type="button"
+                            aria-expanded={open}
+                            aria-controls={cardId}
+                            aria-label={items.length > 0 ? t('inbox.pillLabel', { summary: pillSummary(items, t) }) : t('inbox.pillLabelEmpty')}
+                            onClick={togglePill}
+                            className={cn('flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', cardOpen && 'bg-accent text-foreground')}
+                        >
+                            <InboxIcon className="size-4 shrink-0" />
+                            <span className="min-w-0 flex-1 truncate text-left">{t('inbox.needsYouRow')}</span>
+                            {needs > 0 && (
+                                <span className="relative flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium text-white tabular-nums">
+                                    {pulse > 0 && !reducedMotion && (
+                                        <motion.span
+                                            key={pulse}
+                                            aria-hidden
+                                            initial={{ opacity: 0.8, scale: 1 }}
+                                            animate={{ opacity: 0, scale: 1.8 }}
+                                            transition={{ duration: 0.8, ease: 'easeOut' }}
+                                            className="pointer-events-none absolute inset-0 rounded-full border border-red-500"
+                                        />
+                                    )}
+                                    {needs}
+                                </span>
+                            )}
+                        </button>
+
+                        {/* Out of the list's column: the announcement is wider than it and a parent clips its overflow. */}
+                        {dropAnchor &&
+                            createPortal(
+                                <div ref={dropLayerRef} style={{ top: dropAnchor.top, left: dropAnchor.left }} className="fixed z-40">
+                                    <div aria-live="polite" className="absolute top-0 left-0 pt-1">
+                                        <AnimatePresence>
+                                            {announcement && !cardOpen && (
+                                                <motion.button
+                                                    key={announcement.key}
+                                                    type="button"
+                                                    onClick={onAnnouncementClick}
+                                                    onPointerEnter={() => onAnnouncementHoldChange?.(true)}
+                                                    onPointerLeave={() => onAnnouncementHoldChange?.(false)}
+                                                    onFocus={() => onAnnouncementHoldChange?.(true)}
+                                                    onBlur={() => onAnnouncementHoldChange?.(false)}
+                                                    initial={dropped}
+                                                    animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+                                                    exit={dropped}
+                                                    transition={morph}
+                                                    style={{ transformOrigin: 'top left' }}
+                                                    className={cn('relative block overflow-hidden rounded-xl border border-border bg-card text-left shadow-2xl transition-colors hover:bg-accent', cardClassName)}
+                                                >
+                                                    <AnnouncementLine announcement={announcement} animated={!reducedMotion} />
+                                                </motion.button>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
+                                </div>,
+                                document.body
+                            )}
+                    </div>
+                </PopoverAnchor>
+                <PopoverContent
+                    id={cardId}
+                    aria-label={t('inbox.title')}
+                    align="start"
+                    className="w-auto gap-0 overflow-hidden p-0"
+                    onOpenAutoFocus={event => event.preventDefault()}
+                    // The focus stays on the row: a Tab that leaves it must not close the card, only a click outside or Escape does.
+                    onFocusOutside={event => event.preventDefault()}
+                    onInteractOutside={event => {
+                        if (keepOpen || rootRef.current?.contains(event.target as Node)) event.preventDefault()
+                    }}
+                    onEscapeKeyDown={event => keepOpen && event.preventDefault()}
+                >
+                    <AnimatedSize axis="both" transition={resize}>
+                        <StepTransition stepKey={stepKey} direction={stepDirection}>
+                            {showsDetail ? <div className={cn('relative', shown.detailClassName)}>{shown.detail}</div> : <div className={cn('relative flex flex-col', cardClassName, dragging && 'select-none')}>{listBody}</div>}
+                        </StepTransition>
+                    </AnimatedSize>
+                </PopoverContent>
+            </Popover>
+        )
+    }
 
     return (
         <div ref={rootRef} className="relative">
@@ -315,7 +539,7 @@ export function InboxSurface<T extends InboxEntry>({
                 aria-controls={cardId}
                 aria-label={items.length > 0 ? t('inbox.pillLabel', { summary: pillSummary(items, t) }) : t('inbox.pillLabelEmpty')}
                 onClick={togglePill}
-                className={cn('sm:pr-[15px]', (cardOpen || cardMounted) && 'invisible')}
+                className={cn((cardOpen || cardMounted) && 'invisible')}
             >
                 {pulse > 0 && !reducedMotion && (
                     <motion.span
@@ -346,105 +570,56 @@ export function InboxSurface<T extends InboxEntry>({
                         <motion.span aria-hidden initial={{ opacity: 1 }} animate={{ opacity: 0 }} exit={{ opacity: 1 }} transition={fade} className="pointer-events-none absolute inset-0 rounded-[inherit]">
                             <BorderBeam pattern="arcs" tone="white" animated={false} glow angle={53} outset={1} className="opacity-30" />
                         </motion.span>
-                        {hasDetail ? (
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} className={cn('relative shrink-0', detailClassName)}>
-                                {detail}
-                            </motion.div>
-                        ) : (
-                        <div className={cn('relative flex shrink-0 flex-col', cardClassName, dragging && 'select-none')}>
-                            {/* Its own compositor layer: rasterized once, then only moved and clipped while the card morphs around it. */}
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} className="flex flex-col border-b border-border will-change-transform">
-                                {resizable && (
-                                    <button
-                                        type="button"
-                                        aria-label={t('inbox.resize')}
-                                        onPointerDown={onHandlePointerDown}
-                                        onPointerMove={onHandlePointerMove}
-                                        onPointerUp={onHandlePointerUp}
-                                        onPointerCancel={onHandlePointerUp}
-                                        onClick={onHandleClick}
-                                        onKeyDown={onHandleKeyDown}
-                                        className="absolute top-0 left-1/2 z-10 flex h-5 w-12 -translate-x-1/2 cursor-ns-resize touch-none justify-center pt-1.5 outline-none hover:[&>span]:bg-muted-foreground/50 focus-visible:[&>span]:bg-ring"
-                                    >
-                                        <span className={cn('h-1 w-8 rounded-full bg-muted-foreground/25 transition-colors', dragging && 'bg-muted-foreground/50')} />
-                                    </button>
-                                )}
+                        <AnimatedSize axis="both" transition={resize} className="relative shrink-0">
+                            <StepTransition stepKey={stepKey} direction={stepDirection}>
+                                {showsDetail ? (
+                                    <div className={cn('relative', shown.detailClassName, contentFade)}>{shown.detail}</div>
+                                ) : (
+                                    <div className={cn('relative flex flex-col', cardClassName, dragging && 'select-none')}>
+                                        {listBody}
 
-                                <div className={cn('flex items-center justify-between gap-3 px-4 pb-2', resizable ? 'pt-5' : 'pt-4')}>
-                                    <h2 className="text-base font-semibold text-foreground">{t('inbox.title')}</h2>
-                                    <div className="flex items-center gap-1.5">
-                                        {!showSettings ? null : onOpenSettings ? (
-                                            <Button size="sm" variant="ghost" onClick={onOpenSettings}>
-                                                {t('inbox.preferences')}
-                                            </Button>
-                                        ) : (
-                                            <TooltipDisabledReason reason={settingsDisabledReason ?? t('inbox.preferencesUnavailable')}>
-                                                <Button size="sm" variant="ghost" disabled>
-                                                    {t('inbox.preferences')}
-                                                </Button>
-                                            </TooltipDisabledReason>
-                                        )}
-                                        {items.length === 0 ? (
-                                            <TooltipDisabledReason reason={t('inbox.nothingToMark')}>
-                                                <Button size="icon-sm" variant="outline" aria-label={t('inbox.markAllRead')} disabled>
-                                                    <CheckCheckIcon className="size-3.5" />
-                                                </Button>
-                                            </TooltipDisabledReason>
-                                        ) : (
-                                            <TooltipLabeled label={t('inbox.markAllRead')}>
-                                                <Button size="icon-sm" variant="outline" aria-label={t('inbox.markAllRead')} onClick={onMarkAllRead}>
-                                                    <CheckCheckIcon className="size-3.5" />
-                                                </Button>
-                                            </TooltipLabeled>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {sections.length > 1 && (
-                                    <div className="flex flex-wrap gap-1.5 px-4 pb-2">
-                                        {sections.map(section => (
-                                            <Chip key={section.key} selected={section.key === shownSection} onClick={() => jumpToSection(section.key)}>
-                                                {t(`inbox.sections.${section.key}`)} <span className="ml-0.5 tabular-nums opacity-60">{section.items.reduce((sum, item) => sum + (item.count ?? 1), 0)}</span>
-                                            </Chip>
-                                        ))}
+                                        <button type="button" aria-label={t('inbox.close')} onClick={closeToPill} className="flex h-[calc(var(--chrome-size)-2px)] shrink-0 items-center pr-[15px] pl-[11px] transition-colors hover:bg-accent">
+                                            <InboxPillContent items={items} />
+                                        </button>
                                     </div>
                                 )}
-
-                                {running.length > 0 && <RunningLine agentIds={running} />}
-
-                                <div
-                                    ref={setListEl}
-                                    style={{ maxHeight: listMaxHeight, maskImage: mask, WebkitMaskImage: mask }}
-                                    className={cn('relative overflow-y-auto overscroll-contain px-2 pb-2', !dragging && 'transition-[max-height] duration-300 ease-out motion-reduce:transition-none')}
-                                >
-                                    <div>
-                                        {sections.length === 0 ? (
-                                            <EmptyState icon={InboxIcon} title={t('inbox.empty.title')} description={t('inbox.empty.description')} className="py-8" />
-                                        ) : (
-                                            sections.map(section => (
-                                                <section key={section.key} data-section={section.key} className="flex flex-col">
-                                                    <h3 className="px-2 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t(`inbox.sections.${section.key}`)}</h3>
-                                                    {section.items.map(item => (
-                                                        <InboxRow key={item.id} item={item} onOpen={onOpenItem} onMarkRead={onMarkRead} reason={rowReason?.(item)} Menu={RowMenu} onMenuOpenChange={onRowMenuOpenChange} />
-                                                    ))}
-                                                </section>
-                                            ))
-                                        )}
-                                    </div>
-                                </div>
-                            </motion.div>
-
-                            <button type="button" aria-label={t('inbox.close')} onClick={closeToPill} className="flex h-[calc(var(--chrome-size)-2px)] shrink-0 items-center pr-[15px] pl-[11px] transition-colors hover:bg-accent">
-                                <InboxPillContent items={items} />
-                            </button>
-                        </div>
-                        )}
+                            </StepTransition>
+                        </AnimatedSize>
                     </motion.div>
                 )}
             </AnimatePresence>
 
         </div>
     )
+}
+
+type ShownSection<T extends InboxEntry> = InboxSection & { items: T[] }
+
+// Mounting every row of a long inbox at once froze the card's opening: the first screen comes with the
+// card, the rest in one go once it has finished opening, so they never cut into its animation.
+function InboxSections<T extends InboxEntry>({ sections, startWithAllRows, revealAll, renderRow }: { sections: ShownSection<T>[]; startWithAllRows: boolean; revealAll: boolean; renderRow: (item: T) => ReactNode }) {
+    const t = useKitTranslations()
+    const [allRows, setAllRows] = useState(startWithAllRows)
+    if (revealAll && !allRows) setAllRows(true)
+
+    useEffect(() => {
+        if (allRows) return
+        const timer = setTimeout(() => startTransition(() => setAllRows(true)), REST_OF_ROWS_DELAY_MS)
+        return () => clearTimeout(timer)
+    }, [allRows])
+
+    let budget = allRows ? Infinity : FIRST_SCREEN_ROWS
+    return sections.map(section => {
+        if (budget <= 0) return null
+        const rows = section.items.slice(0, budget)
+        budget -= rows.length
+        return (
+            <section key={section.key} data-section={section.key} className="flex flex-col">
+                <h3 className="px-2 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{t(`inbox.sections.${section.key}`)}</h3>
+                {rows.map(renderRow)}
+            </section>
+        )
+    })
 }
 
 function AnnouncementLine({ announcement, animated }: { announcement: InboxAnnouncement; animated: boolean }) {
@@ -509,7 +684,8 @@ function pillSummary(items: InboxEntry[], t: KitTranslator): string {
     return [needs > 0 && t('inbox.needsYouCount', { count: needs }), done > 0 && t('inbox.doneCount', { count: done })].filter(Boolean).join(' · ')
 }
 
-// `compact` keeps only the bell below `sm`: the full summary crowds the bottom bar on a phone.
+// `compact` keeps only the bell on a phone, or on a board narrower than 56rem (the `board` container,
+// shrunk by the chat column on a wide window): the full summary would crowd the bottom bar.
 function InboxPillContent({ items, compact = false }: { items: InboxEntry[]; compact?: boolean }) {
     const t = useKitTranslations()
     const stack = [...new Set(items.map(item => item.agentId).filter(Boolean))].slice(0, PILL_STACK_SIZE)
@@ -519,7 +695,7 @@ function InboxPillContent({ items, compact = false }: { items: InboxEntry[]; com
                 <BellIcon className="size-4" />
                 {items.length > 0 && <span aria-hidden className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-red-500 ring-2 ring-card" />}
             </span>
-            <span className={cn('flex items-center gap-2', compact && 'hidden sm:flex')}>
+            <span className={cn('flex items-center gap-2', compact && 'pr-1 max-sm:hidden @max-4xl/board:hidden')}>
                 {stack.length > 0 && (
                     <span aria-hidden className="flex -space-x-1.5">
                         {stack.map(agentId => (
@@ -665,4 +841,20 @@ function RevealOnHover({ children }: { children: ReactNode }) {
             <span className="overflow-hidden">{children}</span>
         </span>
     )
+}
+
+// Where the row's card drops from, in viewport coordinates: the bottom-left corner of the row.
+function useDropAnchor(anchorRef: RefObject<HTMLElement | null>, active: boolean, remeasureKey: unknown) {
+    const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null)
+    useLayoutEffect(() => {
+        if (!active) return
+        const measure = () => {
+            const rect = anchorRef.current?.getBoundingClientRect()
+            if (rect) setAnchor(current => (current?.top === rect.bottom && current.left === rect.left ? current : { top: rect.bottom, left: rect.left }))
+        }
+        measure()
+        window.addEventListener('resize', measure)
+        return () => window.removeEventListener('resize', measure)
+    }, [anchorRef, active, remeasureKey])
+    return active ? anchor : null
 }

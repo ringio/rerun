@@ -1,6 +1,5 @@
 // Tant qu'une feature n'est pas lancée, son flag limite l'accès anticipé.
 // Passer la constante à `true` la rend à tout le monde et réveille ce qui va avec.
-export const REWIND_RELEASED = false
 // Gates the Desktop button of the agent sheet. What an agent does with its screen (the computer
 // tools, a takeover asked in its chat) is gated by DESKTOP_RELEASED on the engine.
 export const COMPUTER_RELEASED = true
@@ -20,3 +19,10 @@ export const OPENCODE_ENABLED = process.env.NEXT_PUBLIC_OPENCODE_ENABLED === '1'
 // Gates the language packs: until it flips, everyone outside the early access reads English and the
 // language pickers stay hidden, whatever their browser or their saved choice asks for.
 export const I18N_RELEASED = true
+// Gates the workspace's Vault: its entry in the workspace menu, and new connectors going into it
+// rather than into each coworker's folder. Until it flips, only the early access sees it, and a box
+// without the engine's `vault` capability keeps every connector per coworker whatever it says.
+export const VAULT_RELEASED = true
+// Gates the Simple view, the list of coworkers beside the chat offered next to the 3D board. Until it
+// flips, only the early access sees the switch; the board stays everyone's default either way.
+export const SIMPLE_VIEW_RELEASED = true

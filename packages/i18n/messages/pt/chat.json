@@ -212,6 +212,8 @@
         "sendFailed": "Não foi possível enviar essa gravação.",
         "sendFailedHint": "Tente de novo ou descarte.",
         "waitingForMicrophone": "Aguardando o microfone...",
+        "microphone": "Microfone...",
+        "transcribing": "Transcrevendo...",
         "hideTranscript": "Ocultar transcrição",
         "transcript": "Transcrição",
         "copyTranscript": "Copiar transcrição",
@@ -363,7 +365,8 @@
         "reconnect": {
             "title": "Reconectar",
             "cta": "Reconectar",
-            "description": "Entre de novo na conexão que este coworker usa."
+            "description": "Entre de novo na conexão que este coworker usa.",
+            "descriptionReplaceKey": "Cole a nova chave na conexão que este coworker usa."
         }
     },
     "budget": {
@@ -409,10 +412,15 @@
         "resetsNextMonth": "Eles renovam no mês que vem.",
         "lifetime": {
             "ownConnection": "Seu plano vitalício roda na sua própria IA, e seu plano {plan} está conectado.",
-            "connectProvider": "Seu plano vitalício roda na sua própria IA. Conecte Claude ou ChatGPT para seus coworkers continuarem trabalhando.",
+            "connectProvider": "Seu plano vitalício roda na sua própria IA. Adicione uma chave de API, ou conecte o ChatGPT, para seus coworkers continuarem trabalhando.",
+            "connectProviderWithClaude": "Seu plano vitalício roda na sua própria IA. Adicione uma chave de API, ou conecte o Claude ou o ChatGPT, para seus coworkers continuarem trabalhando.",
+            "apiKeyTitle": "Usar uma chave de API",
+            "apiKeyDescription": "Anthropic, OpenAI, Google, OpenRouter ou um endpoint personalizado.",
+            "apiKeyCta": "Adicionar uma chave",
             "body": "Seu plano vitalício roda na sua própria IA.",
             "connectTitle": "Conectar sua IA",
-            "connectDescription": "Claude, ChatGPT ou uma chave de API.",
+            "connectDescription": "Uma chave de API ou o ChatGPT.",
+            "connectDescriptionWithClaude": "Uma chave de API, o Claude ou o ChatGPT.",
             "connectCta": "Conectar"
         },
         "trial": {

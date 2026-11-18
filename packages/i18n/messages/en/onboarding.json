@@ -1,0 +1,116 @@
+{
+    "_context": {
+        "industries": "Lines of business shown as a badge on the onboarding board and as tiles of the industry question.",
+        "roles": "Job titles offered as tiles on the role question of the onboarding. Short, like a job title on a business card.",
+        "site.titleNamed": "{name} is the first name of the person signing up.",
+        "site.skip": "Button: the person has no company website.",
+        "team.description": "The AI coworkers of the workspace work for every person invited to it.",
+        "role.description": "The first AI coworker built for them will work for the person in that role.",
+        "engine.greetingNamed": "{name} is the first name of the person. Said by the Chief of Staff, the AI assistant of the workspace, when it wakes up at the end of the onboarding.",
+        "engine.milestones": "Each line names a step that really happened while the workspace's machine is set up."
+    },
+    "metaTitle": "Welcome",
+    "back": "Back",
+    "continue": "Continue",
+    "site": {
+        "title": "What's your website?",
+        "titleNamed": "Hi {name}, what's your website?",
+        "description": "We read it and staff your board.",
+        "label": "Company website",
+        "placeholder": "acme.com",
+        "continue": "Continue",
+        "skip": "I don't have one"
+    },
+    "industry": {
+        "title": "What's your line of work?",
+        "description": "Your team changes with it.",
+        "other": "Other",
+        "otherLabel": "Your line of work",
+        "otherPlaceholder": "Bakery, dental practice, gym…"
+    },
+    "role": {
+        "title": "What do you do there?",
+        "description": "Your first coworker works for you.",
+        "other": "Something else",
+        "otherLabel": "Your role",
+        "otherPlaceholder": "Head of Growth"
+    },
+    "roles": {
+        "founderAgencyOwner": "Founder / Agency owner",
+        "accountOrClientLead": "Account or client lead",
+        "marketingCreative": "Marketing / Creative",
+        "operations": "Operations",
+        "founderStoreOwner": "Founder / Store owner",
+        "marketingGrowth": "Marketing / Growth",
+        "customerCare": "Customer care",
+        "operationsLogistics": "Operations / Logistics",
+        "founderCeo": "Founder / CEO",
+        "productOrEngineering": "Product or Engineering",
+        "salesOrSupport": "Sales or Support",
+        "salesRepOrAe": "Sales rep or AE",
+        "salesLeadership": "Sales leadership",
+        "marketingDemandGen": "Marketing / Demand gen",
+        "recruiter": "Recruiter",
+        "talentOrHrLead": "Talent or HR lead",
+        "founderBroker": "Founder / Broker",
+        "agent": "Agent",
+        "propertyOrPortfolioManager": "Property or portfolio manager",
+        "marketing": "Marketing",
+        "founderPartner": "Founder / Partner",
+        "lawyerOrCounsel": "Lawyer or counsel",
+        "paralegalOrLegalOps": "Paralegal or legal ops",
+        "businessDevelopment": "Business development",
+        "creatorFounder": "Creator / Founder",
+        "editorOrWriter": "Editor or writer",
+        "communityOrSocial": "Community or social",
+        "sponsorshipsBusiness": "Sponsorships / Business",
+        "financeOrAdmin": "Finance or Admin",
+        "projectOrTeamLead": "Project or team lead",
+        "sales": "Sales"
+    },
+    "team": {
+        "title": "Invite your team",
+        "description": "Your coworkers work for all of you.",
+        "label": "Email of a teammate",
+        "placeholder": "name@company.com",
+        "invite": "Invite",
+        "invited": "Invited",
+        "link": "Invite link",
+        "copy": "Copy",
+        "copied": "Copied",
+        "skip": "Skip"
+    },
+    "trial": {
+        "title": "Start your free trial",
+        "description": "Your coworkers start working the moment it begins.",
+        "start": "Start my free trial"
+    },
+    "engine": {
+        "title": "Setting up your workspace",
+        "milestones": {
+            "trial": "Confirming your trial…",
+            "machine": "Reserving your machine…",
+            "engine": "Waking up your Chief of Staff…"
+        },
+        "ready": "Let's build your team together.",
+        "greeting": "Hi, I'm your Chief of Staff",
+        "greetingNamed": "Hi {name}, I'm your Chief of Staff",
+        "failed": "Your machine is taking longer than usual.",
+        "retry": "Try again",
+        "enterAnyway": "Go in anyway",
+        "enter": "Let's go",
+        "wait": "One moment"
+    },
+    "industries": {
+        "agencies": "Agencies",
+        "ecommerce": "E-commerce",
+        "saas": "SaaS",
+        "sales": "Sales",
+        "recruiting": "Recruiting",
+        "real-estate": "Real estate",
+        "legal": "Legal & compliance",
+        "creators": "Creators",
+        "productivity": "Productivity",
+        "other": "Other"
+    }
+}

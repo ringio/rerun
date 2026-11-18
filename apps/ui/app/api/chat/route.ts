@@ -3,12 +3,14 @@ import { requireWorkspaceContext } from '@/app/api/_auth/ownership'
 import { createSessionRow, ensureSessionRow, findGeneralSession, GeneralAlreadyOpenError, getAgentChatTarget, getExistingSession, updateSessionStatus } from '@/app/api/_services/chat.service'
 import { messageAuthorOf } from '@/app/api/_services/me.service'
 import { recordSessionParticipant, recordSessionRead } from '@/app/api/_services/notification-audience.service'
+import { recordSentMessage } from '@/app/api/_services/session-preview.service'
 import type { Database } from '@/app/api/database.types'
 import { generateSessionTitle } from '@/lib/ai/generate-title'
 import { cancelRun, reconnectRun } from '@/lib/engine/client'
 import { QUEUED_RETRY_DELAYS_MS, startChat } from '@/lib/chat/start-chat'
 import { stripAttachmentsRef } from '@/lib/chat/attachments-marker'
 import { installSessionTitle, parseInstallMessage } from '@/lib/chat/install-marker'
+import { seedSessionTitle } from '@/lib/chat/session-title'
 import { preferredLanguage } from '@/lib/foreman/language'
 import { stripVoiceMarker } from '@/lib/voice/marker'
 import { createServiceRoleClient } from '@/supabase/serviceRole'
@@ -189,12 +191,13 @@ export async function POST(request: Request) {
                 }
                 return Response.json({ error: 'Failed to persist session' }, { status: 500 })
             }
-            // General keeps its name; a thread is named after what it opens with.
+            // General keeps its name; a thread is named after what it opens with, unless someone
+            // renamed it while the title was being written.
             if (!install && !general) {
                 generateSessionTitle(sessionTitleSeed)
                     .then(async title => {
                         const supabase = createServiceRoleClient()
-                        await supabase.from('sessions').update<Database['public']['Tables']['sessions']['Update']>({ title }).eq('id', supabaseSessionId)
+                        await supabase.from('sessions').update<Database['public']['Tables']['sessions']['Update']>({ title }).eq('id', supabaseSessionId).eq('title', seedSessionTitle(sessionTitleSeed))
                     })
                     .catch(() => {})
             }
@@ -211,6 +214,10 @@ export async function POST(request: Request) {
 
     await updateSessionStatus(supabaseSessionId, 'working')
     await Promise.all([recordSessionParticipant(supabaseSessionId, author.id), recordSessionRead(supabaseSessionId, author.id)])
+    // Not awaited, and not in `after()` either: that one waits for the whole streamed answer, and
+    // would land the message after the reply it asked for. An install opens with its guide, which is
+    // nobody's message.
+    if (!install) void recordSentMessage(supabaseSessionId, text, author.id)
 
     const headers = new Headers()
     headers.set('Content-Type', engineRes.headers.get('content-type') ?? 'text/event-stream')

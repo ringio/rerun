@@ -5,7 +5,6 @@ import { createSchedule, getAgent, listConnections, patchAgent, setBoxDefault, u
 import type { BoxConnection, EngineAgentDetail } from '@/lib/engine/types'
 
 import { resolveAgentTarget } from './chat.service'
-import { assertModelEntitled } from './engine-plan.service'
 import { dispatchAccountTool } from './mcp-account.service'
 import { getWorkspaceConnection } from './workspace-engine.service'
 
@@ -17,8 +16,7 @@ vi.mock('./workspace-engine.service', () => ({ NoEngineError: class NoEngineErro
 vi.mock('./agent.service', () => ({ changeAgentHandle: vi.fn(), createAgent: vi.fn(), deleteAgent: vi.fn(), moveAgentToBox: vi.fn(), renameAgent: vi.fn() }))
 vi.mock('./agent-setup.service', () => ({ installServiceSlugs: vi.fn() }))
 vi.mock('./services.service', () => ({ listCatalogServices: vi.fn(), listInstalledServices: vi.fn(), searchCatalogServices: vi.fn(), uninstallService: vi.fn() }))
-vi.mock('./mcp-shares.service', () => ({ dispatchShareTool: vi.fn() }))
-vi.mock('./engine-plan.service', () => ({ assertModelEntitled: vi.fn() }))
+vi.mock('./mcp-vault.service', () => ({ dispatchVaultTool: vi.fn() }))
 
 const WORKSPACE_ID = 7
 const CONN = { baseUrl: 'http://engine', apiKey: null }
@@ -36,7 +34,7 @@ function detail(resolvedConnectionId: string, model: string | null): EngineAgent
 describe('dispatchAccountTool, what a coworker runs on', () => {
     beforeEach(() => {
         vi.clearAllMocks()
-        vi.mocked(resolveAgentTarget).mockResolvedValue({ conn: CONN, engineAgentId: 'engine-agent', contentLocked: false })
+        vi.mocked(resolveAgentTarget).mockResolvedValue({ conn: CONN, engineAgentId: 'engine-agent' })
         vi.mocked(getWorkspaceConnection).mockResolvedValue(CONN)
         vi.mocked(listConnections).mockResolvedValue({ connections: CONNECTIONS, default: { connectionId: 'claude-rerun', model: 'claude-opus-5-5' } })
     })
@@ -105,14 +103,6 @@ describe('dispatchAccountTool, what a coworker runs on', () => {
     it('refuses a default the connection cannot serve', async () => {
         await expect(dispatchAccountTool(workspaceActor(WORKSPACE_ID), 'set_default_model', { connectionId: 'codex-clem', model: 'claude-opus-5-5' })).rejects.toThrow(/does not serve/)
 
-        expect(setBoxDefault).not.toHaveBeenCalled()
-    })
-
-    it('checks the plan before pinning a model, whatever the tool', async () => {
-        vi.mocked(assertModelEntitled).mockRejectedValueOnce(new Error('Opus 5.5 is available with a paid plan.'))
-        await expect(dispatchAccountTool(workspaceActor(WORKSPACE_ID), 'set_default_model', { connectionId: 'claude-clem', model: 'claude-opus-5-5' })).rejects.toThrow(/paid plan/)
-
-        expect(assertModelEntitled).toHaveBeenCalledWith('claude-opus-5-5', WORKSPACE_ID)
         expect(setBoxDefault).not.toHaveBeenCalled()
     })
 

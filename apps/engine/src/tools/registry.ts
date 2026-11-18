@@ -29,12 +29,16 @@ import { installTools } from './builtin/install.js'
 import { foremanTools } from './builtin/foreman.js'
 import { agentFilesTools } from './builtin/agent-files.js'
 import { hasPendingSetup } from '../agents/setup.js'
-import { pooledMcpTools } from './mcp-pool.js'
+import { pooledMcpServers, pooledMcpToolSet } from './mcp-pool.js'
+import { MCP_CALL_TOOL, MCP_SEARCH_TOOL, mcpSearchTool, mcpToolCatalog, mcpToolsAreDeferred, type McpCatalogEntry } from './mcp-search.js'
+import { mcpCallTool } from './mcp-wire.js'
 import { CLI_PROVIDERS } from '../agents/providers.js'
 import { closeAgentDb } from '../db/agentDb.js'
 import type { RunContext } from '../runtime/context.js'
+import { agentMcpServers } from '../vault/runtime.js'
 
-export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; close: () => Promise<void> }> {
+// `heldBackMcp` lists the MCP tools the model is not sent, when the agent's set is too heavy to be.
+export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; heldBackMcp?: McpCatalogEntry[]; close: () => Promise<void> }> {
     const cfg = ctx.agent.config.tools
     const tools: ToolSet = {}
     if (ctx.agent.config.kind === 'foreman') Object.assign(tools, foremanTools(ctx), agentFilesTools())
@@ -75,10 +79,22 @@ export async function buildTools(ctx: RunContext): Promise<{ tools: ToolSet; clo
     if (hasPendingSetup(ctx.agent)) Object.assign(tools, installTools(ctx))
 
     // The connections are the pool's, kept across runs: the run's close leaves them open.
-    if (!CLI_PROVIDERS.has(ctx.provider) && ctx.agent.config.mcpServers.length > 0) Object.assign(tools, await pooledMcpTools(ctx.agent))
+    let heldBackMcp: McpCatalogEntry[] | undefined
+    if (!CLI_PROVIDERS.has(ctx.provider) && agentMcpServers(ctx.agent).length > 0) {
+        const servers = await pooledMcpServers(ctx.agent)
+        const mcpTools = pooledMcpToolSet(servers)
+        Object.assign(tools, mcpTools)
+        // Too heavy to ride along on every step: the model finds them with a search and runs them
+        // through one call, both always in its list.
+        if (mcpToolsAreDeferred(mcpTools)) {
+            heldBackMcp = mcpToolCatalog(servers).filter(entry => entry.name !== MCP_SEARCH_TOOL && entry.name !== MCP_CALL_TOOL)
+            Object.assign(tools, mcpSearchTool(heldBackMcp), mcpCallTool())
+        }
+    }
 
     return {
         tools,
+        heldBackMcp,
         // The shared database is one handle for the whole process, so it is deliberately left
         // open: closing it here would break a run another agent still has in flight.
         close: async () => {

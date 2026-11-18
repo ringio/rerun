@@ -9,13 +9,13 @@
         "contactSupport": "Support kontaktieren"
     },
     "menu": {
-        "weeklyRewind": "Wöchentlicher Rewind",
         "whatsNew": "Neuigkeiten",
         "gettingStarted": "Erste Schritte",
         "docs": "Doku",
         "community": "Community",
         "shortcuts": "Tastenkürzel",
         "installApp": "App installieren",
+        "desktopApp": "Desktop-App herunterladen",
         "hireExpert": "Experten buchen"
     },
     "power": {
@@ -96,12 +96,15 @@
             "servers": "Nur Admins können Server verwalten",
             "billing": "Nur Admins können die Abrechnung verwalten"
         },
+        "needsPlan": "Verfügbar, sobald deine kostenlose Testphase beginnt",
         "apiKeys": "API-Schlüssel & MCP",
         "settings": "Einstellungen",
         "members": "Mitglieder",
         "brain": "Brain",
         "brainProposals": "{count, plural, one {# Vorschlag zu prüfen} other {# Vorschläge zu prüfen}}",
         "aiProviders": "KI-Anbieter",
+        "vault": "Vault",
+        "vaultSignedOut": "Eine App im Vault ist abgemeldet",
         "servers": "Server",
         "billing": "Abrechnung",
         "newWorkspace": "Neuer Workspace",

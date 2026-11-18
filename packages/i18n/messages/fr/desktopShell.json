@@ -1,0 +1,94 @@
+{
+    "update": {
+        "ready": "Rerun {version} est prêt",
+        "description": "Redémarrez l’app pour utiliser la nouvelle version.",
+        "restart": "Redémarrer"
+    },
+    "downloads": {
+        "done": "{filename} téléchargé",
+        "failed": "Impossible de télécharger {filename}",
+        "show": "Afficher dans le dossier"
+    },
+    "handoff": {
+        "title": "Se connecter à {app}",
+        "body": "Continuer vers {app} en tant que {account} ?",
+        "continue": "Continuer",
+        "switchAccount": "Utiliser un autre compte",
+        "doneTitle": "Retour à {app}",
+        "doneBody": "{app} termine la connexion tout seul. Vous pouvez fermer cet onglet.",
+        "codeHint": "Si {app} ne s’est pas ouvert, collez-y ce code :",
+        "copyCode": "Copier le code",
+        "failed": "Impossible de connecter l’app. Réessayez.",
+        "invalidTitle": "Ce lien a expiré",
+        "invalidBody": "Recommencez la connexion depuis l’app de bureau."
+    },
+    "signIn": {
+        "waitingTitle": "Continuez dans votre navigateur",
+        "waitingBody": "Connectez-vous dans la fenêtre du navigateur qui s’est ouverte, puis revenez ici.",
+        "reopen": "Rouvrir le navigateur",
+        "pasteCode": "Coller un code à la place",
+        "codeLabel": "Code du navigateur",
+        "submit": "Se connecter",
+        "back": "Retour",
+        "errors": {
+            "expired": "Ce code a expiré. Recommencez.",
+            "invalid": "Ce code n’est pas valide. Recommencez.",
+            "state-mismatch": "Cette connexion a été lancée depuis une autre fenêtre. Recommencez.",
+            "network": "Impossible de joindre Rerun. Vérifiez votre connexion.",
+            "cancelled": "La connexion a été annulée."
+        }
+    },
+    "settings": {
+        "openAtLogin": "Ouvrir à la connexion",
+        "openAtLoginMac": "Rerun démarre avec votre Mac, dans la barre des menus.",
+        "openAtLoginOther": "Rerun démarre avec votre ordinateur, dans la zone de notification.",
+        "closeToTray": "Continuer après la fermeture",
+        "closeToTrayHint": "Fermer la fenêtre laisse Rerun dans la zone de notification, les notifications continuent d’arriver.",
+        "updates": "Mises à jour",
+        "version": "Rerun {version}",
+        "checking": "Recherche de mises à jour…",
+        "downloading": "Téléchargement de la mise à jour… {percent} %",
+        "updateFailed": "Impossible de rechercher les mises à jour.",
+        "check": "Rechercher des mises à jour",
+        "restart": "Redémarrer pour passer à {version}",
+        "quickAsk": "Question rapide",
+        "quickAskHint": "{shortcut} ouvre un champ pour votre Chief of Staff depuis n’importe quelle app.",
+        "quickAskOn": "Ouvre un champ pour votre Chief of Staff depuis n’importe quelle app.",
+        "quickAskOff": "Désactivé. Enregistrez un raccourci pour l’activer.",
+        "shortcut": {
+            "record": "Enregistrer un raccourci",
+            "typing": "Tapez un raccourci",
+            "tryAnother": "Essayez-en un autre",
+            "recordingHint": "Échap annule, ⌫ le désactive",
+            "change": "Raccourci {keys}, cliquez pour le changer",
+            "needsModifier": "Ajoutez une touche de modification, comme {key}",
+            "reserved": "{keys} est utilisé par {owner, select, spotlight {Spotlight} finder {la recherche du Finder} inputSources {les sources de saisie} appSwitcher {le sélecteur d’apps} screenshot {les captures d’écran} windowMenu {le menu de la fenêtre} system {le système} other {toutes les apps}}",
+            "taken": "{keys} est utilisé par une autre app"
+        },
+        "quickAskVoice": "Question rapide vocale",
+        "quickAskVoiceOn": "Parlez à votre Chief of Staff depuis n’importe quelle app."
+    },
+    "openInApp": {
+        "title": "Ouvrir cette page dans {app} ?",
+        "open": "Ouvrir"
+    },
+    "quickAsk": {
+        "placeholder": "Demandez à votre Chief of Staff…",
+        "hint": "Entrée pour envoyer, Échap pour fermer",
+        "send": "Envoyer",
+        "holdToTalk": "Maintenez <key>Espace</key> pour parler",
+        "releaseToSend": "Relâchez pour envoyer, Échap pour annuler",
+        "sent": "Envoyé à votre Chief of Staff",
+        "nothingHeard": "Rien entendu. Maintenez Espace et parlez.",
+        "transcriptionFailed": "Impossible de transcrire. Réessayez, ou tapez votre question.",
+        "micDeniedTitle": "Rerun ne vous entend pas",
+        "micDeniedBody": "Autorisez le micro pour Rerun dans les réglages du système.",
+        "openSettings": "Ouvrir les réglages",
+        "typeInstead": "Écrire plutôt",
+        "toggleHint": "Entrée pour envoyer, Échap pour annuler",
+        "cancel": "Annuler"
+    },
+    "server": {
+        "otherServer": "Utiliser un autre serveur Rerun"
+    }
+}

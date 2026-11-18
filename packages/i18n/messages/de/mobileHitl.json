@@ -1,6 +1,7 @@
 {
     "actions": {
         "notNow": "Nicht jetzt",
+        "explain": "Erklären",
         "skip": "Überspringen",
         "connect": "Verbinden",
         "connecting": "Wird verbunden…",
@@ -65,7 +66,12 @@
         "selectAll": "Wähle alle zutreffenden aus",
         "typeAnswer": "Gib deine Antwort ein…",
         "somethingElse": "Etwas anderes",
-        "yourAnswer": "Deine Antwort"
+        "yourAnswer": "Deine Antwort",
+        "record": "Mit deiner Stimme antworten",
+        "useRecording": "Diese Aufnahme verwenden",
+        "discardRecording": "Aufnahme verwerfen",
+        "retryRecording": "Transkription erneut versuchen",
+        "uploadFailed": "Diese Dateien konnten nicht angehängt werden. Versuch es noch mal."
     },
     "secret": {
         "labelOne": "Zugangsdaten nötig",

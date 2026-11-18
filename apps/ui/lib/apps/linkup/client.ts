@@ -153,10 +153,17 @@ export async function createWebhook(accountId: string, url: string, events: read
 
 // --- Actions ---
 
-export type LinkupCategory = 'profiles' | 'network' | 'messages' | 'content'
+export type LinkupCategory = 'profiles' | 'network' | 'messages' | 'content' | 'recruiter' | 'jobs'
 
 export async function runAction<T = unknown>(accountId: string, category: LinkupCategory, action: string, params: Record<string, unknown>): Promise<T> {
     return call<T>('POST', `/v2/${category}`, { account_id: accountId, action, params })
+}
+
+// Endpoints that take their parameters flat in the body, without an `action` + `params` pair.
+export type LinkupFlatEndpoint = 'typeahead' | 'balance'
+
+export async function runFlatEndpoint<T = unknown>(accountId: string, endpoint: LinkupFlatEndpoint, body: Record<string, unknown>): Promise<T> {
+    return call<T>('POST', `/v2/${endpoint}`, { ...body, account_id: accountId })
 }
 
 // --- Attachments ---

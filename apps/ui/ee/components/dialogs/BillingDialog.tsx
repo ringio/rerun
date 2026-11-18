@@ -14,24 +14,33 @@ import { useWorkspaceAccess } from '@/hooks/useWorkspaceAccess'
 import { checkoutRouteFor, trialOffer, type CheckoutRoute } from '@/ee/lib/billing/checkout-variant'
 import { CreditCardIcon, RefreshCwIcon, TicketIcon } from '@/lib/icons'
 import { isSubscriptionEntitled } from '@/ee/lib/billing/entitlement'
+import { useCreditCheckoutReturn } from '@/ee/lib/billing/useCreditCheckoutReturn'
 import { isLifetimePlan } from '@/ee/lib/billing/plans'
 import { useBillingStore } from '@/stores/billing.store'
 import { hasPendingStart, useOnboardingStore } from '@/stores/onboarding.store'
 import { useWorkspaceSettingsStore } from '@/stores/workspace-settings.store'
+import { usePaidAppsStore } from '@/stores/paid-apps.store'
+import { AppIcon } from '@/components/apps/PaidAppViews'
+import { useEnabledPaidApps } from '@/components/layout/FeatureFlagsProvider'
+import { appInfo } from '@/lib/apps/catalog'
+import type { AppSlug } from '@/lib/apps/types'
 import { useSession } from '@/supabase/session/SessionProvider'
 
 import { BillingDialogShell } from './billing/BillingDialogShell'
 import { CheckoutDialog } from './billing/CheckoutDialog'
+import { CreditPane, type CreditPurchased } from './billing/CreditPane'
+import { SuccessPanel } from './billing/parts'
 import { PlanDialog } from './billing/PlanDialog'
 import { CancelSubscriptionDialog } from './cancel-subscription/CancelSubscriptionDialog'
 
 // What the dialog shows, decided when it opens and held until it closes: a payment rewrites the
 // workspace through the webhook, and re-deciding then would swap the success panel for the next
 // dialog under the user's eyes.
-type Resolved = { kind: 'loading' } | { kind: 'checkout'; route: CheckoutRoute } | { kind: 'plan' } | { kind: 'lifetime' } | { kind: 'error' }
+type Resolved = { kind: 'loading' } | { kind: 'checkout'; route: CheckoutRoute } | { kind: 'plan' } | { kind: 'lifetime' } | { kind: 'credit' } | { kind: 'error' }
 
 // Every openBilling() lands here. Two dialogs: the checkout, which sells a plan (or ends a trial),
-// and the plan dialog, which manages one that is paid.
+// and the plan dialog, which manages one that is paid. Rerun credit is sold to every workspace: one
+// with no paid plan to manage buys it from a dialog of its own.
 export function BillingDialog() {
     const { workspace, role } = useSession()
     const { open, highlightAddon, trigger, setOpen } = useBillingStore()
@@ -40,6 +49,7 @@ export function BillingDialog() {
     const [state, setState] = useState<SubscriptionState | null>(null)
     const [resolved, setResolved] = useState<Resolved>({ kind: 'loading' })
     const [cancelOpen, setCancelOpen] = useState(false)
+    useCreditCheckoutReturn()
 
     const entitled = isSubscriptionEntitled(workspace?.subscription_status)
 
@@ -75,8 +85,9 @@ export function BillingDialog() {
         // Paid once, outside Stripe: there is nothing to sell, and a Pro subscription would overwrite
         // the plan, so cancelling it later would take the lifetime access away.
         if (isLifetimePlan(workspace)) {
-            setResolved({ kind: 'lifetime' })
-            track('paywall_viewed', { trigger: trigger ?? 'manual', addon_shown: highlightAddon ?? undefined, variant: 'lifetime' })
+            const kind = highlightAddon === 'credit_pack' ? 'credit' : 'lifetime'
+            setResolved({ kind })
+            track('paywall_viewed', { trigger: trigger ?? 'manual', addon_shown: highlightAddon ?? undefined, variant: kind })
             return
         }
         setResolved({ kind: 'loading' })
@@ -86,7 +97,9 @@ export function BillingDialog() {
             return
         }
         const route = resolve(read?.state ?? null)
-        track('paywall_viewed', { trigger: trigger ?? 'manual', addon_shown: highlightAddon ?? undefined, variant: route?.variant ?? 'plan' })
+        const credit = !!route && highlightAddon === 'credit_pack'
+        if (credit) setResolved({ kind: 'credit' })
+        track('paywall_viewed', { trigger: trigger ?? 'manual', addon_shown: highlightAddon ?? undefined, variant: credit ? 'credit' : (route?.variant ?? 'plan') })
     }, [workspace, entitled, loadState, resolve, trigger, highlightAddon])
 
     const opened = useRef(false)
@@ -118,7 +131,13 @@ export function BillingDialog() {
                         close()
                         useWorkspaceSettingsStore.getState().openAiProviders()
                     }}
+                    onOpenApp={slug => {
+                        close()
+                        usePaidAppsStore.getState().openApp(slug)
+                    }}
                 />
+            ) : resolved.kind === 'credit' ? (
+                <CreditPurchaseShell onClose={close} />
             ) : resolved.kind === 'error' ? (
                 <ErrorShell onRetry={() => void decide()} />
             ) : resolved.kind === 'checkout' ? (
@@ -162,8 +181,31 @@ function AdminOnlyShell({ onClose }: { onClose: () => void }) {
     )
 }
 
-function LifetimeShell({ onConnectAi }: { onConnectAi: () => void }) {
+function CreditPurchaseShell({ onClose }: { onClose: () => void }) {
+    const t = useTranslations('billing')
+    const { refreshWorkspace } = useSession()
+    const [success, setSuccess] = useState<CreditPurchased | null>(null)
+    return (
+        <DialogContent aria-describedby={undefined} className="flex max-h-[calc(100dvh_-_2rem)] flex-col overflow-y-auto bg-popover sm:max-w-md">
+            <DialogTitle className="sr-only">{t('plan.credit.title')}</DialogTitle>
+            {success ? (
+                <SuccessPanel title={success.title} body={success.body} cta={t('plan.success.done')} onDone={onClose} />
+            ) : (
+                <CreditPane
+                    onDone={async next => {
+                        await refreshWorkspace()
+                        setSuccess(next)
+                    }}
+                />
+            )}
+        </DialogContent>
+    )
+}
+
+// The paid apps are not part of the lifetime plan: they are bought apart, from their own dialog.
+function LifetimeShell({ onConnectAi, onOpenApp }: { onConnectAi: () => void; onOpenApp: (slug: AppSlug) => void }) {
     const t = useTranslations('billing.dialog')
+    const apps = useEnabledPaidApps()
     return (
         <DialogContent aria-describedby={undefined} className="bg-popover sm:max-w-md">
             <DialogTitle className="sr-only">{t('title')}</DialogTitle>
@@ -172,9 +214,21 @@ function LifetimeShell({ onConnectAi }: { onConnectAi: () => void }) {
                 title={t('lifetime.title')}
                 description={t('lifetime.description')}
                 action={
-                    <Button size="sm" variant="outline" onClick={onConnectAi}>
-                        {t('lifetime.connectAi')}
-                    </Button>
+                    <div className="flex flex-col items-center gap-3">
+                        <Button size="sm" variant="outline" onClick={onConnectAi}>
+                            {t('lifetime.connectAi')}
+                        </Button>
+                        {apps.length > 0 && (
+                            <div className="flex flex-wrap justify-center gap-1">
+                                {apps.map(slug => (
+                                    <Button key={slug} size="sm" variant="ghost" onClick={() => onOpenApp(slug)}>
+                                        <AppIcon slug={slug} size="xs" />
+                                        {appInfo(slug).name}
+                                    </Button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 }
             />
         </DialogContent>

@@ -12,6 +12,9 @@ import { reportPlanInvoicePaid, reportSubscriptionCancelRequested } from '@/ee/s
 import { markPaymentMethodAdded } from '@/app/api/_services/getting-started.service'
 import { enforceTrialCardClaim } from '@/ee/services/trial-card.service'
 import { applyTemplateSubscription, recordTemplatePurchase, recordTemplateRenewal, refundTemplatePurchase, revokeTemplateSubscription } from '@/ee/services/template-purchase.service'
+import { recordCreditCheckoutSession, recordCreditInvoice, refundCreditPurchase } from '@/ee/services/credit-purchase.service'
+import { deliverLifetimeCheckout, refundLifetimePurchase } from '@/ee/services/lifetime-deal.service'
+import { applyLifetimeAddonsSubscription } from '@/ee/services/lifetime-addons.service'
 import { stripe, subscriptionOfInvoice } from '@/ee/lib/billing/stripe'
 import { signedStripeRequest, TEST_WEBHOOK_SECRET } from '@/ee/test/stripe-fake'
 import { claimStripeEvent, markStripeEventProcessed, releaseStripeEvent } from './idempotency'
@@ -42,9 +45,22 @@ vi.mock('@/ee/services/template-purchase.service', () => ({
     refundTemplatePurchase: vi.fn(),
     revokeTemplateSubscription: vi.fn(),
 }))
+vi.mock('@/ee/services/credit-purchase.service', async importOriginal => ({
+    isCreditCheckoutSession: (await importOriginal<typeof import('@/ee/services/credit-purchase.service')>()).isCreditCheckoutSession,
+    recordCreditCheckoutSession: vi.fn(),
+    recordCreditInvoice: vi.fn(),
+    refundCreditPurchase: vi.fn(),
+}))
+vi.mock('@/ee/services/lifetime-deal.service', async importOriginal => ({
+    isLifetimeCheckoutSession: (await importOriginal<typeof import('@/ee/services/lifetime-deal.service')>()).isLifetimeCheckoutSession,
+    deliverLifetimeCheckout: vi.fn(),
+    refundLifetimePurchase: vi.fn(),
+}))
+vi.mock('@/ee/services/lifetime-addons.service', () => ({ applyLifetimeAddonsSubscription: vi.fn() }))
 vi.mock('./idempotency', async importOriginal => ({ ...(await importOriginal<typeof import('./idempotency')>()), claimStripeEvent: vi.fn(), markStripeEventProcessed: vi.fn(), releaseStripeEvent: vi.fn() }))
 
 const planSubscription = { id: 'sub_plan', object: 'subscription', metadata: { plan: 'base', workspace_id: '7' }, items: { data: [{ price: { id: 'price_base' } }] }, cancel_at_period_end: false }
+const lifetimeAddonsSubscription = { id: 'sub_addons', object: 'subscription', status: 'trialing', metadata: { kind: 'lifetime_addons', workspace_id: '7' }, items: { data: [{ price: { id: 'price_linkedin_slot' } }] } }
 const templateSubscription = { id: 'sub_tpl', object: 'subscription', metadata: { kind: 'template_purchase' }, items: { data: [{ price: { id: 'price_template' } }] } }
 
 function deliver(type: string, object: object, extra: { previous_attributes?: object; account?: string } = {}) {
@@ -122,6 +138,24 @@ describe('checkout.session.completed', () => {
         expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled()
     })
 
+    it('delivers the code of a lifetime deal, and nothing else', async () => {
+        const session = { id: 'cs_1', mode: 'payment', payment_status: 'paid', metadata: { kind: 'lifetime_deal' } }
+        const res = await deliver('checkout.session.completed', session)
+        expect(res.status).toBe(200)
+        expect(deliverLifetimeCheckout).toHaveBeenCalledWith(expect.objectContaining({ id: 'cs_1' }))
+        expect(recordTemplatePurchase).not.toHaveBeenCalled()
+        expect(recordCreditCheckoutSession).not.toHaveBeenCalled()
+        expect(applySubscriptionToWorkspace).not.toHaveBeenCalled()
+    })
+
+    it('answers 500 when the lifetime code could not be emailed, so Stripe delivers the event again', async () => {
+        vi.mocked(deliverLifetimeCheckout).mockRejectedValue(new Error('resend down'))
+        const res = await deliver('checkout.session.completed', { id: 'cs_1', mode: 'payment', payment_status: 'paid', metadata: { kind: 'lifetime_deal' } })
+        expect(res.status).toBe(500)
+        expect(releaseStripeEvent).toHaveBeenCalledWith('evt_1')
+        expect(markStripeEventProcessed).not.toHaveBeenCalled()
+    })
+
     it('refuses to grant a template purchase whose session payment_status is unpaid', async () => {
         const session = { id: 'cs_1', mode: 'payment', status: 'complete', payment_status: 'unpaid', metadata: { kind: 'template_purchase' } }
         const res = await deliver('checkout.session.completed', session)
@@ -129,6 +163,14 @@ describe('checkout.session.completed', () => {
         expect(recordTemplatePurchase).not.toHaveBeenCalled()
         expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled()
         expect(applySubscriptionToWorkspace).not.toHaveBeenCalled()
+    })
+
+    it('grants the Rerun credit bought on a Checkout page, without touching the plan', async () => {
+        const session = { id: 'cs_1', mode: 'payment', payment_status: 'paid', metadata: { kind: 'credit_purchase', workspace_id: '7', packs: '2' } }
+        await deliver('checkout.session.completed', session)
+        expect(recordCreditCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'cs_1' }))
+        expect(recordTemplatePurchase).not.toHaveBeenCalled()
+        expect(stripe.subscriptions.retrieve).not.toHaveBeenCalled()
     })
 
     it('applies a plan card setup and marks the payment method added', async () => {
@@ -177,6 +219,35 @@ describe('checkout.session.completed', () => {
         expect(stripe.subscriptions.retrieve).toHaveBeenCalledWith('sub_plan')
         expect(applySubscriptionToWorkspace).not.toHaveBeenCalled()
         expect(adoptCheckoutPaymentMethodAsDefault).not.toHaveBeenCalled()
+    })
+})
+
+describe('lifetime add-ons subscription', () => {
+    it('applies the slots bought on a Checkout page, without the trial card check nor the plan sync', async () => {
+        vi.mocked(stripe.subscriptions.retrieve).mockResolvedValue(lifetimeAddonsSubscription as never)
+        await deliver('checkout.session.completed', { id: 'cs_1', mode: 'subscription', subscription: 'sub_addons', metadata: { kind: 'lifetime_addons', workspace_id: '7' } })
+        expect(applyLifetimeAddonsSubscription).toHaveBeenCalledWith(lifetimeAddonsSubscription, { adopt: true })
+        expect(enforceTrialCardClaim).not.toHaveBeenCalled()
+        expect(applySubscriptionToWorkspace).not.toHaveBeenCalled()
+        expect(adoptCheckoutPaymentMethodAsDefault).not.toHaveBeenCalled()
+    })
+
+    it('adopts a created subscription, skipping the trial card check', async () => {
+        await deliver('customer.subscription.created', lifetimeAddonsSubscription)
+        expect(applyLifetimeAddonsSubscription).toHaveBeenCalledWith(expect.objectContaining({ id: 'sub_addons' }), { adopt: true })
+        expect(enforceTrialCardClaim).not.toHaveBeenCalled()
+    })
+
+    it('refreshes an updated subscription without letting it take over', async () => {
+        await deliver('customer.subscription.updated', lifetimeAddonsSubscription)
+        expect(applyLifetimeAddonsSubscription).toHaveBeenCalledWith(expect.objectContaining({ id: 'sub_addons' }), { adopt: false })
+        expect(applySubscriptionToWorkspace).not.toHaveBeenCalled()
+    })
+
+    it('gives the slots back when the subscription is deleted, and never cancels the lifetime plan', async () => {
+        await deliver('customer.subscription.deleted', { ...lifetimeAddonsSubscription, status: 'canceled' })
+        expect(applyLifetimeAddonsSubscription).toHaveBeenCalledWith(expect.objectContaining({ id: 'sub_addons', status: 'canceled' }), { adopt: false })
+        expect(markSubscriptionCanceled).not.toHaveBeenCalled()
     })
 })
 
@@ -247,9 +318,9 @@ describe('customer.subscription.*', () => {
 })
 
 describe('invoice.*', () => {
-    it('records the renewal, reports the payment and stamps the first payment, in that order', async () => {
+    it('records a credit purchase, the renewal, reports the payment and stamps the first payment, in that order', async () => {
         await deliver('invoice.paid', { id: 'in_1' })
-        const fns = [recordTemplateRenewal, reportPlanInvoicePaid, stampFirstPlanPayment]
+        const fns = [recordCreditInvoice, recordTemplateRenewal, reportPlanInvoicePaid, stampFirstPlanPayment]
         for (const fn of fns) expect(fn).toHaveBeenCalledWith(expect.objectContaining({ id: 'in_1' }))
         const order = fns.map(fn => vi.mocked(fn).mock.invocationCallOrder[0])
         expect(order).toEqual([...order].sort((a, b) => a - b))
@@ -294,5 +365,15 @@ describe('charge.refunded', () => {
         await deliver('charge.refunded', { id: 'ch_1' })
         expect(refundTemplatePurchase).toHaveBeenCalledWith(expect.objectContaining({ id: 'ch_1' }))
         expect(markStripeEventProcessed).toHaveBeenCalledWith('evt_1')
+    })
+
+    it('takes back the Rerun credit of a refunded purchase', async () => {
+        await deliver('charge.refunded', { id: 'ch_1' })
+        expect(refundCreditPurchase).toHaveBeenCalledWith(expect.objectContaining({ id: 'ch_1' }))
+    })
+
+    it('takes back the code of a refunded lifetime deal', async () => {
+        await deliver('charge.refunded', { id: 'ch_1' })
+        expect(refundLifetimePurchase).toHaveBeenCalledWith(expect.objectContaining({ id: 'ch_1' }))
     })
 })

@@ -15,18 +15,21 @@ import { CreditMeter, UpgradePill } from '@rerun/cloud/billing.client'
 import { ExpertProfileDialog } from '@/components/dialogs/ExpertProfileDialog'
 import { KnowledgeBaseDialog } from '@/components/dialogs/KnowledgeBaseDialog'
 import { PaidAppDialogs, usePaidAppsStore, AppsMenuSection } from '@rerun/cloud/apps.client'
-import { useEnabledPaidApps } from '@/components/layout/FeatureFlagsProvider'
+import { useEnabledPaidApps, useVaultEnabled } from '@/components/layout/FeatureFlagsProvider'
+import { VaultDialog } from '@/components/vault/VaultDialog'
+import { vaultSignedOutCountAction } from '@/app/api/_actions/vault.actions'
 import { WorkspaceMembersDialog } from '@/components/dialogs/WorkspaceMembersDialog'
 import { WorkspaceSettingsDialog } from '@/components/dialogs/WorkspaceSettingsDialog'
-import { SignInPillButton } from '@/components/layout/SignInPill'
 import { ThemeMenuRow } from '@/components/layout/ThemeMenuRow'
+import { ViewMenuRow } from '@/components/workspace-view/ViewMenuRow'
 import { LanguageMenuRow } from '@/components/layout/LanguageMenuRow'
 import { HelpButton } from '@/components/layout/HelpButton'
-import { WeeklyRewindMenuItem, WhatsNewMenuItem } from '@/components/layout/ToolbarActions'
+import { WhatsNewMenuItem } from '@/components/layout/ToolbarActions'
 import { WorkspacePowerDialog, WorkspacePowerMenuItems, type PowerAction } from '@/components/layout/WorkspacePowerControl'
 import { WorkspaceLogoImage, WorkspacePill } from '@rerun/ui/chrome'
-import { Badge } from '@rerun/ui/primitives'
+import { Badge, Stripes, useIsMobile } from '@rerun/ui/primitives'
 import { TooltipDisabledReason } from '@/components/ui/tooltip'
+import { useNeedsPlanToConnect } from '@/components/connections/NoPlanNotice'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { activeAgentLimitFor, BILLING_ENABLED, isLifetimePlan, isWorkspaceApiEntitled } from '@rerun/cloud/billing'
 import { useBrainProposalCount } from '@/hooks/useBrainProposalCount'
@@ -37,15 +40,14 @@ import { useAccountStore } from '@/stores/account.store'
 import { useBillingStore } from '@/stores/billing.store'
 import { useCreatorStore } from '@/stores/creator.store'
 import { useBrainStore } from '@/stores/brain.store'
-import { useForemanStore } from '@/stores/foreman.store'
 import { useNotificationsStore } from '@/stores/notifications.store'
 import { useWorkspaceSettingsStore } from '@/stores/workspace-settings.store'
 import { useIsWorkspaceAdmin, useSession } from '@/supabase/session/SessionProvider'
-import { BadgeCheck, BellIcon, BrainIcon, CheckIcon, CreditCardIcon, FlaskConical, GaugeIcon, GridIcon, IdCardIcon, KeyIcon, LayersIcon, Loader2Icon, LockKeyholeIcon, LogOutIcon, PlusIcon, ServerIcon, SettingsIcon, ShieldCheckIcon, UserRoundIcon, UsersIcon } from '@/lib/icons'
+import { BadgeCheck, BellIcon, BrainIcon, CheckIcon, ChevronDownIcon, ChevronsUpDownIcon, CreditCardIcon, FlaskConical, GaugeIcon, GridIcon, IdCardIcon, KeyIcon, LayersIcon, Loader2Icon, LockIcon, LockKeyholeIcon, LogOutIcon, PlusIcon, ServerIcon, SettingsIcon, ShieldCheckIcon, UserRoundIcon, UsersIcon } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 import { abortWorkspaceSwitch, beginWorkspaceSwitch, enterActiveWorkspace } from '@/lib/workspace/workspace-switch'
 import Link from 'next/link'
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useState, type ReactNode } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { useTranslations } from 'next-intl'
@@ -54,8 +56,8 @@ const PRICING_ICONS = ['/pricing/solo.png', '/pricing/team.png', '/pricing/scale
 
 type SessionWorkspace = NonNullable<ReturnType<typeof useSession>['workspace']>
 
-// A menu entry an admin uses and a member sees, disabled, with the reason on hover.
-function AdminOnly({ allowed, reason, className = 'flex w-full', children }: { allowed: boolean; reason: string; className?: string; children: ReactNode }) {
+// A menu entry the caller cannot use yet (a member, or a workspace with no plan): shown disabled, with the reason on hover.
+function DisabledWithReason({ allowed, reason, className = 'flex w-full', children }: { allowed: boolean; reason: string; className?: string; children: ReactNode }) {
     if (allowed) return <>{children}</>
     return (
         <TooltipDisabledReason reason={reason} side="right" className={className}>
@@ -76,10 +78,11 @@ function workspaceSummary(workspace: SessionWorkspace, t: WorkspaceMenuTranslato
     return isLifetimePlan(workspace) ? t('summary.lifetime', { limits }) : limits
 }
 
-export function WorkspaceSwitcher() {
+// `column`: at the top of the Simple view's list, in the flow, alone: help and the offer sit at its foot.
+export function WorkspaceSwitcher({ placement = 'corner' }: { placement?: 'corner' | 'column' }) {
     const t = useTranslations('layout.workspaceMenu')
     const errorText = useErrorText()
-    const { user, workspace, workspaces, session, isAnonymous, signOut } = useSession()
+    const { user, workspace, workspaces, session, signOut } = useSession()
     const openBilling = useBillingStore(s => s.openBilling)
     const paidApps = useEnabledPaidApps()
     const openApp = usePaidAppsStore(s => s.openApp)
@@ -114,9 +117,21 @@ export function WorkspaceSwitcher() {
     // ever opens.
     const [powerAction, setPowerAction] = useState<PowerAction | null>(null)
     const refreshBrainProposals = useBrainStore(s => s.refreshProposalCount)
-    const brainProposals = useBrainProposalCount(Boolean(workspace) && !isAnonymous)
-    const guided = useForemanStore(state => state.funnel === 'guided')
+    const brainProposals = useBrainProposalCount(Boolean(workspace))
+    const vaultEnabled = useVaultEnabled()
+    // Brain, AI providers and the Vault all live on the workspace's machine, and a workspace gets one
+    // only once it is on a plan.
+    const needsPlan = useNeedsPlanToConnect()
+    // Entries of the Vault waiting on a sign-in: read on mount and each time the menu opens.
+    const [vaultSignedOut, setVaultSignedOut] = useState(0)
+    const refreshVaultSignedOut = useCallback(() => {
+        if (vaultEnabled) void vaultSignedOutCountAction().then(setVaultSignedOut)
+    }, [vaultEnabled])
+    useEffect(refreshVaultSignedOut, [refreshVaultSignedOut])
     const credit = useRerunCredit()
+    // A list beside the menu has no room on a phone: there the header unfolds it in place instead.
+    const isMobile = useIsMobile()
+    const [switching, setSwitching] = useState(false)
 
     // An app joins the Apps section of the menu with its first account: counted on mount and again
     // each time a dialog connects or removes one.
@@ -128,17 +143,6 @@ export function WorkspaceSwitcher() {
     const appsInMenu = paidApps.filter(slug => (appAccounts[slug] ?? 0) > 0)
 
     if (!workspace) return null
-
-    // A returning user on a fresh browser lands here anonymous: an empty board under "My workspace"
-    // reads as a lost account, so this corner is where the way back in sits. On a phone the funnel's
-    // sheet cannot be closed and carries its own sign-in, so the pill would only crowd the board.
-    if (isAnonymous) {
-        return (
-            <div className={cn('absolute top-4 left-4 z-40', guided && 'max-md:hidden')}>
-                <SignInPillButton />
-            </div>
-        )
-    }
 
     const isExpert = user?.account_role === 'expert'
     const apiEntitled = isWorkspaceApiEntitled(workspace)
@@ -174,11 +178,12 @@ export function WorkspaceSwitcher() {
         setEntering(false)
     }
 
+    const listInPlace = isMobile && switching
     const trialing = workspace.subscription_status === 'trialing'
     const showCredit = !workspace.is_sandbox && credit.budgetMicros > 0 && workspace.subscription_status !== 'past_due'
 
     const apiKeysItem = (
-        <AdminOnly allowed={workspaceAdmin} reason={t('adminOnly.apiKeys')}>
+        <DisabledWithReason allowed={workspaceAdmin} reason={t('adminOnly.apiKeys')}>
             <DropdownMenuItem disabled={!workspaceAdmin} onSelect={() => (apiEntitled ? openWorkspacePanel('api_keys') : openBilling(undefined, 'api_keys'))} className="gap-2 text-muted-foreground">
                 <KeyIcon className="size-4" />
                 {t('apiKeys')}
@@ -188,82 +193,7 @@ export function WorkspaceSwitcher() {
                     </Badge>
                 )}
             </DropdownMenuItem>
-        </AdminOnly>
-    )
-
-    // A sandbox has no settings, members nor billing of its own, but it runs on a machine of its own,
-    // so it keeps its providers, its knowledge base and the API key the template tools require.
-    const headerSection = (
-        <div className="flex flex-col gap-2.5 p-1.5">
-            <div className="flex items-center gap-2.5">
-                <WorkspaceLogoImage src={workspace.icon_url || activeIcon} fallbackSrc={activeIcon} className="size-8 shrink-0 rounded-full object-cover" />
-                <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-foreground">{workspace.name || t('defaultName')}</div>
-                    <div className="truncate text-xs text-muted-foreground">{workspaceSummary(workspace, t)}</div>
-                </div>
-            </div>
-            {showCredit && (
-                <CreditMeter
-                    usedMicros={credit.usedMicros}
-                    wholeMicros={credit.budgetMicros}
-                    trial={trialing}
-                    onOpen={() => (workspaceAdmin ? openBilling(undefined, 'workspace_menu') : undefined)}
-                    onAdd={workspaceAdmin ? () => openBilling(trialing ? undefined : 'credit_pack', 'workspace_menu') : undefined}
-                />
-            )}
-            {!workspace.is_sandbox && (
-                <div className="flex gap-1.5">
-                    <AdminOnly allowed={workspaceAdmin} reason={t('adminOnly.settings')} className="flex flex-1">
-                        <DropdownMenuItem disabled={!workspaceAdmin} onSelect={() => openWorkspacePanel('workspace')} className="h-7 flex-1 justify-center gap-1.5 rounded-md border border-border text-xs text-foreground">
-                            <SettingsIcon className="size-3.5" />
-                            {t('settings')}
-                        </DropdownMenuItem>
-                    </AdminOnly>
-                    <DropdownMenuItem onSelect={() => openWorkspacePanel('members')} className="h-7 flex-1 justify-center gap-1.5 rounded-md border border-border text-xs text-foreground">
-                        <UsersIcon className="size-3.5" />
-                        {t('members')}
-                    </DropdownMenuItem>
-                </div>
-            )}
-        </div>
-    )
-
-    const workspaceItemsSection = (
-        <>
-            <DropdownMenuItem onSelect={() => openWorkspacePanel('knowledge_base')} className="gap-2 text-muted-foreground">
-                <BrainIcon className="size-4" />
-                {t('brain')}
-                {brainProposals > 0 && (
-                    <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white tabular-nums" aria-label={t('brainProposals', { count: brainProposals })}>
-                        {brainProposals}
-                    </span>
-                )}
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => openWorkspacePanel('ai_providers')} className="gap-2 text-muted-foreground">
-                <LockKeyholeIcon className="size-4" />
-                {t('aiProviders')}
-            </DropdownMenuItem>
-            {apiKeysItem}
-            {SERVERS_ENABLED && (
-                <AdminOnly allowed={workspaceAdmin} reason={t('adminOnly.servers')}>
-                    <DropdownMenuItem disabled={!workspaceAdmin} onSelect={() => setServersOpen(true)} className="gap-2 text-muted-foreground">
-                        <ServerIcon className="size-4" />
-                        {t('servers')}
-                    </DropdownMenuItem>
-                </AdminOnly>
-            )}
-            {BILLING_ENABLED && !workspace.is_sandbox && (
-                <AdminOnly allowed={workspaceAdmin} reason={t('adminOnly.billing')}>
-                    <DropdownMenuItem disabled={!workspaceAdmin} onSelect={() => openBilling()} className="gap-2 text-muted-foreground">
-                        <CreditCardIcon className="size-4" />
-                        {t('billing')}
-                    </DropdownMenuItem>
-                </AdminOnly>
-            )}
-            <WhatsNewMenuItem />
-            <WeeklyRewindMenuItem />
-            {!workspace.is_sandbox && appsInMenu.length > 0 && <AppsMenuSection apps={appsInMenu} onOpen={slug => openApp(slug)} />}
-        </>
+        </DisabledWithReason>
     )
 
     const workspacesSection = (
@@ -284,6 +214,120 @@ export function WorkspaceSwitcher() {
                 <PlusIcon className="size-4" />
                 {t('newWorkspace')}
             </DropdownMenuItem>
+        </>
+    )
+
+    const identity = (
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+            <WorkspaceLogoImage src={workspace.icon_url || activeIcon} fallbackSrc={activeIcon} className="size-8 shrink-0 rounded-full object-cover" />
+            <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-foreground">{workspace.name || t('defaultName')}</div>
+                <div className="truncate text-xs text-muted-foreground">{workspaceSummary(workspace, t)}</div>
+            </div>
+        </div>
+    )
+
+    const identityTrigger = isMobile ? (
+        <DropdownMenuItem
+            aria-expanded={switching}
+            onSelect={event => {
+                event.preventDefault()
+                setSwitching(value => !value)
+            }}
+            className={cn('p-1', switching && 'bg-accent')}
+        >
+            {identity}
+            <ChevronsUpDownIcon className="size-4 text-muted-foreground" />
+        </DropdownMenuItem>
+    ) : (
+        <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="p-1 [&>svg:last-child]:text-muted-foreground">{identity}</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-60 max-h-[calc(100dvh-5rem)] overflow-y-auto">{workspacesSection}</DropdownMenuSubContent>
+        </DropdownMenuSub>
+    )
+
+    // A sandbox has no settings, members nor billing of its own, but it runs on a machine of its own,
+    // so it keeps its providers, its knowledge base and the API key the template tools require.
+    const headerSection = (
+        <div className="flex flex-col gap-2.5 p-0.5">
+            {identityTrigger}
+            {!listInPlace && (showCredit || !workspace.is_sandbox) && (
+                <div className="flex flex-col gap-2.5 px-1 pb-1">
+                    {showCredit && (
+                        <CreditMeter
+                            usedMicros={credit.usedMicros}
+                            wholeMicros={credit.budgetMicros}
+                            trial={trialing}
+                            onOpen={() => (workspaceAdmin ? openBilling(undefined, 'workspace_menu') : undefined)}
+                            onAdd={workspaceAdmin ? () => openBilling(trialing ? undefined : 'credit_pack', 'workspace_menu') : undefined}
+                        />
+                    )}
+                    {!workspace.is_sandbox && (
+                        <div className="flex gap-1.5">
+                            <DisabledWithReason allowed={workspaceAdmin} reason={t('adminOnly.settings')} className="flex flex-1">
+                                <DropdownMenuItem disabled={!workspaceAdmin} onSelect={() => openWorkspacePanel('workspace')} className="h-7 flex-1 justify-center gap-1.5 rounded-md border border-border text-xs text-foreground">
+                                    <SettingsIcon className="size-3.5" />
+                                    {t('settings')}
+                                </DropdownMenuItem>
+                            </DisabledWithReason>
+                            <DropdownMenuItem onSelect={() => openWorkspacePanel('members')} className="h-7 flex-1 justify-center gap-1.5 rounded-md border border-border text-xs text-foreground">
+                                <UsersIcon className="size-3.5" />
+                                {t('members')}
+                            </DropdownMenuItem>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+
+    const workspaceItemsSection = (
+        <>
+            <DisabledWithReason allowed={!needsPlan} reason={t('needsPlan')}>
+                <DropdownMenuItem disabled={needsPlan} onSelect={() => openWorkspacePanel('knowledge_base')} className="gap-2 text-muted-foreground">
+                    <BrainIcon className="size-4" />
+                    {t('brain')}
+                    {brainProposals > 0 && (
+                        <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] text-white tabular-nums" aria-label={t('brainProposals', { count: brainProposals })}>
+                            {brainProposals}
+                        </span>
+                    )}
+                </DropdownMenuItem>
+            </DisabledWithReason>
+            <DisabledWithReason allowed={!needsPlan} reason={t('needsPlan')}>
+                <DropdownMenuItem disabled={needsPlan} onSelect={() => openWorkspacePanel('ai_providers')} className="gap-2 text-muted-foreground">
+                    <LockKeyholeIcon className="size-4" />
+                    {t('aiProviders')}
+                </DropdownMenuItem>
+            </DisabledWithReason>
+            {vaultEnabled && (
+                <DisabledWithReason allowed={!needsPlan} reason={t('needsPlan')}>
+                    <DropdownMenuItem disabled={needsPlan} onSelect={() => openWorkspacePanel('vault')} className="gap-2 text-muted-foreground">
+                        <LockIcon className="size-4" />
+                        {t('vault')}
+                        {vaultSignedOut > 0 && <span className="ml-auto size-2 rounded-full bg-orange-500" aria-label={t('vaultSignedOut')} />}
+                    </DropdownMenuItem>
+                </DisabledWithReason>
+            )}
+            {apiKeysItem}
+            {SERVERS_ENABLED && (
+                <DisabledWithReason allowed={workspaceAdmin} reason={t('adminOnly.servers')}>
+                    <DropdownMenuItem disabled={!workspaceAdmin} onSelect={() => setServersOpen(true)} className="gap-2 text-muted-foreground">
+                        <ServerIcon className="size-4" />
+                        {t('servers')}
+                    </DropdownMenuItem>
+                </DisabledWithReason>
+            )}
+            {BILLING_ENABLED && !workspace.is_sandbox && (
+                <DisabledWithReason allowed={workspaceAdmin} reason={t('adminOnly.billing')}>
+                    <DropdownMenuItem disabled={!workspaceAdmin} onSelect={() => openBilling()} className="gap-2 text-muted-foreground">
+                        <CreditCardIcon className="size-4" />
+                        {t('billing')}
+                    </DropdownMenuItem>
+                </DisabledWithReason>
+            )}
+            <WhatsNewMenuItem />
+            {!workspace.is_sandbox && appsInMenu.length > 0 && <AppsMenuSection apps={appsInMenu} onOpen={slug => openApp(slug)} />}
         </>
     )
 
@@ -362,6 +406,7 @@ export function WorkspaceSwitcher() {
     const footerSection = (
         <>
             <ThemeMenuRow />
+            <ViewMenuRow />
             <LanguageMenuRow />
             <DropdownMenuItem onSelect={() => useNotificationsStore.getState().openNotifications()} className="gap-2 text-muted-foreground">
                 <BellIcon className="size-4" />
@@ -378,26 +423,42 @@ export function WorkspaceSwitcher() {
         </>
     )
 
-    // From the workspace and what runs on it, to switching away from it, to the person using it.
-    const sections = [headerSection, workspaceItemsSection, workspacesSection, rolesSection, footerSection].filter(Boolean)
+    // From the workspace and what runs on it to the person using it. The other workspaces hang off the header.
+    const sections = (listInPlace ? [headerSection, workspacesSection] : [headerSection, workspaceItemsSection, rolesSection, footerSection]).filter(Boolean)
 
     return (
         // Leaves room for the view controls in the top-right corner: on a phone the workspace name
         // truncates rather than pushing the row under them.
-        <div className="absolute top-4 left-4 z-40 flex max-w-[calc(100%-2*var(--chrome-edge)-var(--chrome-size)-var(--chrome-gap))] items-center gap-2">
+        <div className={cn('flex items-center gap-2', placement === 'column' ? 'min-w-0' : 'absolute top-4 left-4 z-40 max-w-[calc(100%-2*var(--chrome-edge)-var(--chrome-size)-var(--chrome-gap))]')}>
             <DropdownMenu
+                modal={false}
                 onOpenChange={open => {
-                    if (!open) return
+                    if (!open) return setSwitching(false)
                     void refreshBrainProposals()
+                    refreshVaultSignedOut()
                     if (!workspace.is_sandbox) for (const slug of paidApps) refreshAppAccounts(slug).catch(() => {})
                 }}
             >
-                <div className="relative min-w-0">
+                {placement === 'column' ? (
                     <DropdownMenuTrigger asChild>
-                        <WorkspacePill className="max-w-full shrink" name={workspace.name || t('defaultName')} iconUrl={workspace.icon_url || activeIcon} fallbackIconUrl={activeIcon} stripes={workspace.is_sandbox} />
+                        <button type="button" className="relative flex h-8 max-w-full min-w-0 items-center gap-2 rounded-md px-1.5 text-sm font-medium text-foreground transition-colors hover:bg-accent data-[state=open]:bg-accent">
+                            {workspace.is_sandbox && <Stripes className="rounded-md" color="color-mix(in oklab, var(--foreground) 6%, transparent)" />}
+                            <span className="relative shrink-0">
+                                <WorkspaceLogoImage src={workspace.icon_url || activeIcon} fallbackSrc={activeIcon} className="size-6 rounded-md object-cover" />
+                                {brainProposals > 0 && <span className="pointer-events-none absolute -top-0.5 -right-0.5 size-2 rounded-full bg-red-500 ring-2 ring-sidebar" />}
+                            </span>
+                            <span className="relative truncate">{workspace.name || t('defaultName')}</span>
+                            <ChevronDownIcon className="relative size-3.5 shrink-0 text-muted-foreground" />
+                        </button>
                     </DropdownMenuTrigger>
-                    {brainProposals > 0 && <span className="pointer-events-none absolute top-0.5 right-0.5 size-2 rounded-full bg-red-500 ring-2 ring-card" />}
-                </div>
+                ) : (
+                    <div className="relative min-w-0">
+                        <DropdownMenuTrigger asChild>
+                            <WorkspacePill className="max-w-full shrink" name={workspace.name || t('defaultName')} iconUrl={workspace.icon_url || activeIcon} fallbackIconUrl={activeIcon} stripes={workspace.is_sandbox} />
+                        </DropdownMenuTrigger>
+                        {brainProposals > 0 && <span className="pointer-events-none absolute top-0.5 right-0.5 size-2 rounded-full bg-red-500 ring-2 ring-card" />}
+                    </div>
+                )}
                 <DropdownMenuContent
                     align="start"
                     side="bottom"
@@ -411,8 +472,13 @@ export function WorkspaceSwitcher() {
                     ))}
                 </DropdownMenuContent>
             </DropdownMenu>
-            <HelpButton />
-            <UpgradePill />
+            {/* The Simple view's list keeps them at its foot, out of the way of the workspace's name. */}
+            {placement === 'corner' && (
+                <>
+                    <HelpButton />
+                    <UpgradePill />
+                </>
+            )}
 
             <AccountDialog />
             <CreateWorkspaceDialog open={createOpen} onOpenChange={setCreateOpen} />
@@ -427,6 +493,15 @@ export function WorkspaceSwitcher() {
             <ApiKeysDialog open={panel === 'api_keys'} onOpenChange={open => setPanel(open ? 'api_keys' : null)} />
             {SERVERS_ENABLED && <ServersDialog open={serversOpen} onOpenChange={setServersOpen} />}
             <AiProvidersDialog open={panel === 'ai_providers'} onOpenChange={open => setPanel(open ? 'ai_providers' : null)} />
+            {vaultEnabled && (
+                <VaultDialog
+                    open={panel === 'vault'}
+                    onOpenChange={open => {
+                        setPanel(open ? 'vault' : null)
+                        if (!open) refreshVaultSignedOut()
+                    }}
+                />
+            )}
             <KnowledgeBaseDialog open={panel === 'knowledge_base'} onOpenChange={open => setPanel(open ? 'knowledge_base' : null)} />
             <PaidAppDialogs apps={paidApps} />
             <WorkspacePowerDialog action={powerAction} onOpenChange={open => setPowerAction(open ? powerAction : null)} />

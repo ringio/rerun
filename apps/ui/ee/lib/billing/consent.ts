@@ -23,6 +23,30 @@ export const TEMPLATE_PURCHASE_CONSENT: Pick<Stripe.Checkout.SessionCreateParams
     custom_text: { terms_of_service_acceptance: { message: IMMEDIATE_DELIVERY_NOTICE } },
 }
 
+const IMMEDIATE_CREDIT_NOTICE =
+    'The Rerun credit is added to your workspace as soon as the payment succeeds, and never expires. By continuing you ask for that immediate delivery and, if you are a consumer, you accept that your right of withdrawal ends with it.'
+
+export const CREDIT_PURCHASE_CONSENT: Pick<Stripe.Checkout.SessionCreateParams, 'consent_collection' | 'custom_text'> = {
+    consent_collection: { terms_of_service: 'required' },
+    custom_text: { terms_of_service_acceptance: { message: IMMEDIATE_CREDIT_NOTICE } },
+}
+
+const IMMEDIATE_LIFETIME_NOTICE =
+    'Your lifetime code is shown as soon as the payment succeeds. By continuing you ask for that immediate delivery and, if you are a consumer, you accept that your right of withdrawal ends with it.'
+
+export const LIFETIME_PURCHASE_CONSENT: Pick<Stripe.Checkout.SessionCreateParams, 'consent_collection' | 'custom_text'> = {
+    consent_collection: { terms_of_service: 'required' },
+    custom_text: { terms_of_service_acceptance: { message: IMMEDIATE_LIFETIME_NOTICE } },
+}
+
+const IMMEDIATE_SLOT_NOTICE =
+    'Your slot opens as soon as you subscribe, and renews every month until you give it back from the app. By continuing you ask for that immediate start and, if you are a consumer, you accept that your right of withdrawal ends with it.'
+
+export const LIFETIME_ADDONS_CONSENT: Pick<Stripe.Checkout.SessionCreateParams, 'consent_collection' | 'custom_text'> = {
+    consent_collection: { terms_of_service: 'required' },
+    custom_text: { terms_of_service_acceptance: { message: IMMEDIATE_SLOT_NOTICE } },
+}
+
 // Selling carries obligations a buyer never signs up to (clawback on a refund, the cost of a
 // chargeback, tax duties), so the creator contract is accepted separately from the Terms. The date
 // is the version: bump it when /marketplace-terms changes materially, and every creator reaccepts on

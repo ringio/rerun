@@ -2,7 +2,7 @@ import { BorderBeam } from '@rerun/ui'
 import { useTranslations } from 'next-intl'
 
 import { Icon } from '@/components/ui/icon'
-import { BASE_PLAN_CREDITS, CREDITS_PER_PACK, TRIAL_ACTIVE_AGENTS, TRIAL_CREDITS } from '@/ee/lib/billing/plans'
+import { BASE_PLAN_CREDITS, TRIAL_ACTIVE_AGENTS, TRIAL_CREDITS } from '@/ee/lib/billing/plans'
 import { PRO_PERKS, type ProPerk } from '@/ee/lib/billing/pro-perks'
 
 // The perks are listed in lib with their English copy; the rows this table knows by id read from the
@@ -11,14 +11,10 @@ function perkCopy(t: ReturnType<typeof useTranslations<'billing.perks'>>, perk: 
     switch (perk.id) {
         case 'credits':
             return { title: t('rows.credits.title'), trial: t('rows.credits.trial', { credits: TRIAL_CREDITS }), pro: t('rows.credits.pro', { credits: BASE_PLAN_CREDITS }) }
-        case 'models':
-            return { title: t('rows.models.title'), trial: t('rows.models.trial'), pro: t('rows.models.pro') }
         case 'coworkers':
             return { title: t('rows.coworkers.title'), trial: t('rows.coworkers.trial', { count: TRIAL_ACTIVE_AGENTS }), pro: t('rows.coworkers.pro') }
         case 'team':
             return { title: t('rows.team.title'), trial: t('rows.team.trial'), pro: t('rows.team.pro') }
-        case 'topup':
-            return { title: t('rows.topup.title'), trial: t('rows.topup.trial'), pro: t('rows.topup.pro', { credits: CREDITS_PER_PACK }) }
         default:
             return perk
     }
@@ -48,14 +44,8 @@ export function PerksComparison() {
                                     {text.title}
                                 </span>
                             </th>
-                            <td className="py-2.5 pl-4 text-muted-foreground">
-                                {text.trial}
-                                {perk.trialDetail && <span className="block text-xs">{perk.trialDetail}</span>}
-                            </td>
-                            <td className="py-2.5 pl-4 font-medium">
-                                {text.pro}
-                                {perk.proDetail && <span className="block text-xs font-normal text-muted-foreground">{perk.proDetail}</span>}
-                            </td>
+                            <td className="py-2.5 pl-4 text-muted-foreground">{text.trial}</td>
+                            <td className="py-2.5 pl-4 font-medium">{text.pro}</td>
                         </tr>
                     ))}
                 </tbody>

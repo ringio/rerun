@@ -41,7 +41,7 @@ export function hubTools(ctx: RunContext): ToolSet {
         }),
         rerun_hub_publish_file: tool({
             description:
-                'Publish a file or folder from your workspace to a URL the user can open. Use it whenever the user needs to see, open or share something you produced (a page, site, report, chart, PDF, export) instead of saying it is in your workspace. Returns the URL and who can open it. Served as-is, so make it final. A page or site gets its own address (https://<slug>.rerun.site) with a "Made with Rerun" badge. For several pages, publish the FOLDER with an index.html at its root; never inline images as base64. Re-publishing a path keeps its URL and access. A public link may wait for a person to approve it: say so when the result does.',
+                'Publish a file or folder from your workspace to a URL the user can open. Use it whenever the user needs to see, open or share something you produced (a page, site, report, chart, PDF, export) instead of saying it is in your workspace. Returns the URL and who can open it. Served as-is, so make it final. A page or site gets its own address (https://<slug>.rerun.site) with a "Made with Rerun" badge. For several pages, publish the FOLDER with an index.html at its root; never inline images as base64. Re-publishing a path keeps its URL and access. The url of a single file opens a viewer page: give fileUrl, the file itself, to a service that downloads it (an image Instagram fetches). A public link may wait for a person to approve it: say so when the result does.',
             inputSchema: z.object({
                 path: z.string().describe('Path to the file or folder in your workspace, e.g. "reports/q2.pdf" or "sites/launch" (a folder needs an index.html at its root).'),
                 slug: z.string().optional().describe('Optional readable name for the URL (lowercase letters, digits, hyphens). A random suffix is appended: "q2-report" gives "q2-report-k3m9xqw7pt". Share the URL returned, never guess it.'),
@@ -66,6 +66,12 @@ export function hubTools(ctx: RunContext): ToolSet {
             description: 'List the files you currently have published, with their URLs, who can open each one and their original workspace paths.',
             inputSchema: z.object({}),
             execute: () => call('list_published', {}),
+        }),
+        rerun_hub_search_docs: tool({
+            description:
+                'Search the Rerun documentation (docs.rerun.build) for how Rerun works, its limits, pricing or API. Returns passages with their links: hand the user the one you used. Query in English keywords.',
+            inputSchema: z.object({ query: z.string().describe('e.g. "webhook trigger token"') }),
+            execute: ({ query }) => call('search_docs', { query }),
         }),
     }
 }

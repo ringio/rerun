@@ -6,7 +6,6 @@ import { AccessDeniedError, assertAgentInWorkspace, assertSessionInWorkspace, ke
 import { requireWorkspaceId } from '@/app/api/_auth/ownership'
 import { activateAgent } from '@/app/api/_services/agent-activation.service'
 import { getAgentChatTarget, resolveRunTarget, sessionRowOf } from '@/app/api/_services/chat.service'
-import { assertModelEntitled } from '@/app/api/_services/engine-plan.service'
 import { getWorkspaceConnection, NoEngineError } from '@/app/api/_services/workspace-engine.service'
 import { followCoworker } from '@/app/api/_services/notification-audience.service'
 import { getServerSession } from '@/supabase/session/getServerSession'
@@ -78,7 +77,6 @@ import { findPendingHitl, pendingSecrets } from '@/lib/chat-hitl'
 import type { EngineConnection, EngineAgentConfigPatch, EngineAgentDetail, EngineMcpServer, EngineDbRows, EngineMemory, EngineRun, EngineRunDetail, EngineRunStep, EngineSchedule, EngineTrigger, EngineSkill, EngineSkillFilePayload, EngineSkillSummary, EngineSkillWithSource, EngineToolCall, EngineToolFamily, EngineUsageBucket, EngineStatsPoint } from '@/lib/engine/types'
 import type { StatsQuery, UsageTimeRange } from '@rerun/contracts'
 import { FOREMAN_AGENT_ID, statsQuerySchema } from '@rerun/contracts'
-import { sealAgentDetail, sealSchedule, sealSkill, sealSkillFile, sealTrigger } from '@/app/api/_services/agent-content.service'
 import { connectorMcpServerNames, connectorSkillOwners, connectorSkillSlugs, readRegistry } from '@/lib/services/registry'
 import { TEXT_FILE_PAGE_CHARS } from '@rerun/contracts'
 import { failureOf, refusal, refusalOf, type ActionFailure, type ActionRefusal, type ErrorCode, type SuccessResult } from '@/lib/i18n/action-error'
@@ -114,7 +112,7 @@ export async function duplicateAgentAction(input: unknown): Promise<DuplicateAge
     }
 }
 
-const moveInputSchema = z.object({ agentId: z.string().uuid(), spaceId: z.string().uuid() })
+const moveInputSchema = z.object({ agentId: z.string().uuid(), spaceId: z.string().uuid(), sidebarOrder: z.number().finite().optional() })
 
 export type MoveAgentResult = { ok: true; position: { col: number; row: number } } | ActionFailure
 
@@ -122,8 +120,8 @@ export type MoveAgentResult = { ok: true; position: { col: number; row: number }
 // Nothing moves on the engine, only the rectangle the agent is drawn in.
 export async function moveAgentAction(input: unknown): Promise<MoveAgentResult> {
     try {
-        const { agentId, spaceId } = moveInputSchema.parse(input)
-        return await moveAgentToBox(agentId, spaceId, await requireLightSessionActor())
+        const { agentId, spaceId, sidebarOrder } = moveInputSchema.parse(input)
+        return await moveAgentToBox(agentId, spaceId, await requireLightSessionActor(), sidebarOrder)
     } catch (err) {
         return failureOf(err, 'moveCoworkerFailed')
     }
@@ -150,8 +148,8 @@ export async function renameAgentAction(agentId: string, newName: string): Promi
 
 export async function getAgentDetailAction(agentId: string): Promise<EngineAgentDetail | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return sealAgentDetail(await engineGetAgent(conn, engineAgentId), contentLocked)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineGetAgent(conn, engineAgentId)
     } catch {
         return null
     }
@@ -178,10 +176,8 @@ export async function activateAgentAutomationsAction(agentId: string): Promise<v
 
 export async function updateAgentConfigAction(agentId: string, patch: EngineAgentConfigPatch & { soul?: string; install?: string }): Promise<SuccessResult> {
     try {
-        const { conn, engineAgentId, contentLocked } = await resolveRunTarget(agentId, 'manage')
-        await assertModelEntitled(patch.model)
-        // Same reason as the skill body: a sealed soul is dropped from the patch, not written back.
-        await enginePatchAgent(conn, engineAgentId, contentLocked ? { ...patch, soul: undefined } : patch)
+        const { conn, engineAgentId } = await resolveRunTarget(agentId, 'manage')
+        await enginePatchAgent(conn, engineAgentId, patch)
         return { success: true }
     } catch (err) {
         return { success: false, ...refusalOf(err, 'updateCoworkerFailed') }
@@ -382,19 +378,16 @@ async function connectorSkillError(conn: EngineConnection, engineAgentId: string
 
 export async function listSkillsAction(agentId: string): Promise<EngineSkillWithSource[]> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const [skills, registry] = await Promise.all([engineListSkills(conn, engineAgentId), readRegistry(conn, engineAgentId)])
         const fromConnector = connectorSkillSlugs(registry)
-        // The listing carries every body, so it is sealed like the editor is: what stays readable
-        // here is the shelf (names and descriptions), not what is written on the pages.
-        return skills.map(s => ({ ...sealSkill(s, contentLocked), fromConnector: fromConnector.has(s.slug) }))
+        return skills.map(s => ({ ...s, fromConnector: fromConnector.has(s.slug) }))
     } catch {
         return []
     }
 }
 
-// The shelf alone, for the `/` menu of the composer: no body, no file list, no registry read. Names
-// and descriptions stay readable on a sealed agent, so there is nothing to seal here.
+// The shelf alone, for the `/` menu of the composer: no body, no file list, no registry read.
 export async function listSkillSummariesAction(agentId: string): Promise<EngineSkillSummary[]> {
     try {
         const { conn, engineAgentId } = await getAgentChatTarget(agentId)
@@ -404,10 +397,10 @@ export async function listSkillSummariesAction(agentId: string): Promise<EngineS
     }
 }
 
-export async function getSkillAction(agentId: string, slug: string): Promise<(EngineSkill & { locked: boolean }) | null> {
+export async function getSkillAction(agentId: string, slug: string): Promise<EngineSkill | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return sealSkill(await engineGetSkill(conn, engineAgentId, slug), contentLocked)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineGetSkill(conn, engineAgentId, slug)
     } catch {
         return null
     }
@@ -433,11 +426,11 @@ export async function importSkillAction(agentId: string, content: string, files:
     }
 }
 
-export async function readSkillFileAction(agentId: string, slug: string, path: string): Promise<{ content: string; truncated: boolean; locked: boolean } | null> {
+export async function readSkillFileAction(agentId: string, slug: string, path: string): Promise<{ content: string; truncated: boolean } | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const page = await engineReadFileText(conn, skillFilesBase(engineAgentId, slug), path)
-        return sealSkillFile({ content: page.content, truncated: page.truncated ?? page.content.length >= TEXT_FILE_PAGE_CHARS }, contentLocked)
+        return { content: page.content, truncated: page.truncated ?? page.content.length >= TEXT_FILE_PAGE_CHARS }
     } catch {
         return null
     }
@@ -445,10 +438,7 @@ export async function readSkillFileAction(agentId: string, slug: string, path: s
 
 export async function writeSkillFileAction(agentId: string, slug: string, path: string, content: string): Promise<SuccessResult> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId, 'manage')
-        // The editor showed filler, so a save here would write that filler over the real file.
-        // Deleting is left alone: it destroys nothing the user could not already destroy.
-        if (contentLocked) return { success: false, ...refusal('lockedWrite') }
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId, 'manage')
         const readOnly = await connectorSkillError(conn, engineAgentId, slug)
         if (readOnly) return { success: false, ...readOnly }
         await engineWriteFileText(conn, skillFilesBase(engineAgentId, slug), path, content)
@@ -472,8 +462,7 @@ export async function deleteSkillFileAction(agentId: string, slug: string, path:
 
 export async function downloadSkillArchiveAction(agentId: string, slug: string): Promise<SuccessResult & { base64?: string }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        if (contentLocked) return { success: false, ...refusal('lockedDownload') }
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const buffer = await engineFetchSkillArchive(conn, engineAgentId, slug)
         return { success: true, base64: Buffer.from(buffer).toString('base64') }
     } catch (err) {
@@ -483,12 +472,10 @@ export async function downloadSkillArchiveAction(agentId: string, slug: string):
 
 export async function updateSkillAction(agentId: string, slug: string, patch: { description?: string; body?: string }): Promise<SuccessResult & { skill?: EngineSkill }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId, 'manage')
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId, 'manage')
         const readOnly = await connectorSkillError(conn, engineAgentId, slug)
         if (readOnly) return { success: false, ...readOnly }
-        // The body in a sealed form is the filler the server sent, so it is dropped rather than
-        // saved back over the real procedure. Everything else about the skill stays editable.
-        const skill = await engineUpdateSkill(conn, engineAgentId, slug, contentLocked ? { ...patch, body: undefined } : patch)
+        const skill = await engineUpdateSkill(conn, engineAgentId, slug, patch)
         return { success: true, skill }
     } catch (err) {
         return { success: false, ...refusalOf(err, 'updateSkillFailed') }
@@ -562,15 +549,6 @@ export async function clearMemoriesAction(agentId: string): Promise<SuccessResul
 // history is read via the /runs endpoints (see listRunsAction /
 // listScheduleRunsAction below).
 
-export async function listSchedulesAction(agentId: string): Promise<EngineSchedule[]> {
-    try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return (await engineListSchedules(conn, engineAgentId)).map(schedule => sealSchedule(schedule, contentLocked))
-    } catch {
-        return []
-    }
-}
-
 export type WorkspaceRoutine = Pick<EngineSchedule, 'slug' | 'name' | 'cron' | 'runAt' | 'timezone' | 'enabled' | 'lastRunAt'> & {
     agentId: string
     nextRunAt: string | null
@@ -595,33 +573,44 @@ export async function listWorkspaceRoutinesAction(): Promise<WorkspaceRoutines> 
     const conn = await getWorkspaceConnection(workspaceId)
     const now = new Date()
     const canRename = supportsScheduleRename(conn)
-    const perAgent = await Promise.allSettled(
-        runnable.map(async agent => {
-            const engineAgentId = agent.engine_agent_id as string
-            const [schedules, runs, detail] = await Promise.all([
-                engineListSchedules(conn, engineAgentId),
-                engineListRuns(conn, engineAgentId, { status: 'running', limit: 20 }).catch(() => []),
-                engineGetAgent(conn, engineAgentId).catch(() => null),
-            ])
-            const scheduledRuns = runs.filter(run => run.status === 'running' && run.triggerSource === 'schedule')
-            const setupPending = detail ? detail.config.setup.required === true && detail.config.setup.completedAt === null && detail.install.trim().length > 0 : false
-            return schedules.map(schedule => ({
-                agentId: agent.id,
-                slug: schedule.slug,
-                name: schedule.name,
-                cron: schedule.cron,
-                runAt: schedule.runAt,
-                timezone: schedule.timezone,
-                enabled: schedule.enabled,
-                lastRunAt: schedule.lastRunAt,
-                nextRunAt: nextRunAt(schedule, now),
-                runningSince: scheduledRuns.find(run => run.triggerSlug === schedule.slug)?.startedAt ?? null,
-                setupPending,
-            }))
-        })
-    )
+    const perAgent = await Promise.allSettled(runnable.map(agent => routinesOf(conn, agent.id, agent.engine_agent_id as string, now)))
 
     return { routines: perAgent.flatMap(result => (result.status === 'fulfilled' ? result.value : [])).sort(byNextRun), canRename: await canRename }
+}
+
+// One coworker's routines, read the way the workspace's list reads them. Null when they could not be
+// read, which is not a coworker without any: the list on screen stays.
+export async function listAgentRoutinesAction(agentId: string): Promise<WorkspaceRoutines | null> {
+    try {
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        const [routines, canRename] = await Promise.all([routinesOf(conn, agentId, engineAgentId, new Date()), supportsScheduleRename(conn)])
+        return { routines: routines.sort(byNextRun), canRename }
+    } catch {
+        return null
+    }
+}
+
+async function routinesOf(conn: EngineConnection, agentId: string, engineAgentId: string, now: Date): Promise<WorkspaceRoutine[]> {
+    const [schedules, runs, detail] = await Promise.all([
+        engineListSchedules(conn, engineAgentId),
+        engineListRuns(conn, engineAgentId, { status: 'running', limit: 20 }).catch(() => []),
+        engineGetAgent(conn, engineAgentId).catch(() => null),
+    ])
+    const scheduledRuns = runs.filter(run => run.status === 'running' && run.triggerSource === 'schedule')
+    const setupPending = detail ? detail.config.setup.required === true && detail.config.setup.completedAt === null && detail.install.trim().length > 0 : false
+    return schedules.map(schedule => ({
+        agentId,
+        slug: schedule.slug,
+        name: schedule.name,
+        cron: schedule.cron,
+        runAt: schedule.runAt,
+        timezone: schedule.timezone,
+        enabled: schedule.enabled,
+        lastRunAt: schedule.lastRunAt,
+        nextRunAt: nextRunAt(schedule, now),
+        runningSince: scheduledRuns.find(run => run.triggerSlug === schedule.slug)?.startedAt ?? null,
+        setupPending,
+    }))
 }
 
 function byNextRun(a: WorkspaceRoutine, b: WorkspaceRoutine): number {
@@ -633,9 +622,9 @@ function byNextRun(a: WorkspaceRoutine, b: WorkspaceRoutine): number {
 
 export async function getScheduleAction(agentId: string, slug: string): Promise<{ schedule: EngineSchedule; canRename: boolean } | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
         const [schedule, canRename] = await Promise.all([engineGetSchedule(conn, engineAgentId, slug), supportsScheduleRename(conn)])
-        return { schedule: sealSchedule(schedule, contentLocked), canRename }
+        return { schedule, canRename }
     } catch {
         return null
     }
@@ -644,7 +633,6 @@ export async function getScheduleAction(agentId: string, slug: string): Promise<
 export async function createScheduleAction(agentId: string, params: ScheduleCreateParams): Promise<SuccessResult & { schedule?: EngineSchedule }> {
     try {
         const { conn, engineAgentId } = await getAgentChatTarget(agentId, 'manage')
-        await assertModelEntitled(params.model)
         const schedule = await engineCreateSchedule(conn, engineAgentId, params)
         await followCoworker((await getServerSession()).user?.id, agentId)
         return { success: true, schedule }
@@ -655,10 +643,8 @@ export async function createScheduleAction(agentId: string, params: ScheduleCrea
 
 export async function updateScheduleAction(agentId: string, slug: string, patch: ScheduleUpdateParams): Promise<SuccessResult & { schedule?: EngineSchedule }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId, 'manage')
-        await assertModelEntitled(patch.model)
-        // Pausing or rescheduling a sealed task is ordinary use; only its prompt is held back.
-        const schedule = await engineUpdateSchedule(conn, engineAgentId, slug, contentLocked ? { ...patch, body: undefined } : patch)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId, 'manage')
+        const schedule = await engineUpdateSchedule(conn, engineAgentId, slug, patch)
         // A box that predates renaming drops the unknown field and still answers 200.
         if (patch.name !== undefined && schedule.name !== patch.name.trim()) return { success: false, ...refusal('renameRoutineNeedsUpdate') }
         return { success: true, schedule }
@@ -702,8 +688,8 @@ export async function deleteScheduleAction(agentId: string, slug: string): Promi
 
 export async function listTriggersAction(agentId: string): Promise<EngineTrigger[]> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return (await engineListTriggers(conn, engineAgentId)).map(trigger => sealTrigger(trigger, contentLocked))
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineListTriggers(conn, engineAgentId)
     } catch {
         return []
     }
@@ -723,8 +709,8 @@ export async function listTaskOutcomesAction(agentId: string): Promise<Record<st
 
 export async function getTriggerAction(agentId: string, slug: string): Promise<EngineTrigger | null> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId)
-        return sealTrigger(await engineGetTrigger(conn, engineAgentId, slug), contentLocked)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId)
+        return await engineGetTrigger(conn, engineAgentId, slug)
     } catch {
         return null
     }
@@ -733,7 +719,6 @@ export async function getTriggerAction(agentId: string, slug: string): Promise<E
 export async function createTriggerAction(agentId: string, params: TriggerCreateParams): Promise<SuccessResult & { trigger?: EngineTrigger }> {
     try {
         const { conn, engineAgentId } = await getAgentChatTarget(agentId, 'manage')
-        await assertModelEntitled(params.model)
         const trigger = await engineCreateTrigger(conn, engineAgentId, params)
         await followCoworker((await getServerSession()).user?.id, agentId)
         return { success: true, trigger }
@@ -744,9 +729,8 @@ export async function createTriggerAction(agentId: string, params: TriggerCreate
 
 export async function updateTriggerAction(agentId: string, slug: string, patch: TriggerUpdateParams): Promise<SuccessResult & { trigger?: EngineTrigger }> {
     try {
-        const { conn, engineAgentId, contentLocked } = await getAgentChatTarget(agentId, 'manage')
-        await assertModelEntitled(patch.model)
-        const trigger = await engineUpdateTrigger(conn, engineAgentId, slug, contentLocked ? { ...patch, body: undefined } : patch)
+        const { conn, engineAgentId } = await getAgentChatTarget(agentId, 'manage')
+        const trigger = await engineUpdateTrigger(conn, engineAgentId, slug, patch)
         return { success: true, trigger }
     } catch (err) {
         return { success: false, ...refusalOf(err, 'updateTriggerFailed') }

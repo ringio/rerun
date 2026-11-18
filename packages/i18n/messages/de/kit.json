@@ -6,6 +6,7 @@
             "previous": "Vorherige Freigabe",
             "next": "Nächste Freigabe",
             "decline": "Nicht jetzt",
+            "explain": "Erklären",
             "approve": "Freigeben",
             "approved": "Freigegeben"
         },
@@ -68,7 +69,6 @@
             "retry": "Erneut versuchen",
             "dismiss": "Verwerfen",
             "notRemembered": "Nicht gemerkt",
-            "question": "Das merken?",
             "remember": "Merken",
             "no": "Nein",
             "view": "Ansehen",
@@ -108,7 +108,6 @@
     },
     "experts": {
         "wizard": {
-            "step": "Schritt {step}",
             "steps": {
                 "identity": {
                     "title": "Deine Identität",
@@ -345,6 +344,7 @@
         "noUpdates": "Keine Neuigkeiten",
         "pillLabel": "Benachrichtigungen: {summary}",
         "pillLabelEmpty": "Benachrichtigungen: keine Neuigkeiten",
+        "needsYouRow": "Braucht dich",
         "needsYouCount": "{count, plural, one {# braucht dich} other {# brauchen dich}}",
         "doneCount": "{count, plural, one {# fertig} other {# fertig}}",
         "needsYouRich": "{count, plural, one {<b>#</b> braucht dich} other {<b>#</b> brauchen dich}}",

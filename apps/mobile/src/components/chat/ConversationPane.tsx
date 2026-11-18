@@ -2,17 +2,18 @@ import { RERUN_CONNECTION_ID, appendAttachmentsRef, threadsByMessage, authorIdOf
 import { router, useFocusEffect } from 'expo-router'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, ScrollView, StyleSheet, View, type ScrollViewInstance } from 'react-native'
-import Animated, { FadeInDown, FadeOutDown, LayoutAnimationConfig, SlideInDown, SlideOutDown, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated'
+import Animated, { FadeInDown, FadeOutDown, LayoutAnimationConfig, SlideInDown, SlideOutDown, useAnimatedStyle } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useTranslations } from 'use-intl'
 
 import { acknowledgeAlert, cancelSubRun } from '@/api/chat'
 import { runningModel } from '@/api/models'
-import { transcribeRecording, uploadVoiceRecording } from '@/api/uploads'
+import { transcribeRecording, uploadChatFile, uploadVoiceRecording } from '@/api/uploads'
 import { useAuth } from '@/auth/AuthProvider'
 import { setPendingDesktopOpen } from '@/desktop/pending-open'
 import { track } from '@/lib/analytics'
 import * as Haptics from '@/lib/haptics'
+import { useKeyboardHeight } from '@/lib/keyboard-height'
 import { askForPushOnce, setConversationOnScreen } from '@/notifications/push'
 import type { ChatEndpoints } from '@/chat/endpoints'
 import { useCoworkerChat } from '@/chat/useCoworkerChat'
@@ -90,7 +91,7 @@ type ConversationPaneProps = {
     onScreen?: boolean
     // The coworker that opened this conversation on this one, when it was not a person.
     startedBy?: StartedBy | null
-    // Sent as soon as a new conversation is ready, the text someone asked from the search.
+    // Sent once the conversation's history is in, the text someone asked from the search.
     initialMessage?: string
     // False where the machine would refuse the upload: the Foreman of a box that predates its files.
     canAttach?: boolean
@@ -153,7 +154,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
     )
     const [footerHeight, setFooterHeight] = useState(0)
 
-    const keyboard = useAnimatedKeyboard()
+    const keyboard = useKeyboardHeight()
     const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(keyboard.height.value + spacing.sm, insets.bottom) }))
 
     const lastAssistant = chat.messages.findLastIndex(message => message.role === 'assistant')
@@ -257,7 +258,7 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
 
     const askedRef = useRef(false)
     useEffect(() => {
-        if (!initialMessage || askedRef.current || initialSessionId || chat.history !== 'ready') return
+        if (!initialMessage || askedRef.current || chat.history !== 'ready') return
         askedRef.current = true
         send(initialMessage)
     })
@@ -436,6 +437,8 @@ export function ConversationPane({ coworker, makeEndpoints, initialSessionId, on
                                             agentId={coworker.id}
                                             coworkerName={coworker.name}
                                             webUrl={webUrl}
+                                            upload={canAttach && caller ? attachment => uploadChatFile(caller, coworker.id, attachment.uri, attachment.name) : undefined}
+                                            transcribe={caller ? uri => transcribeRecording(caller, uri) : undefined}
                                             onAnswer={text => send(text)}
                                             onDismiss={() => {
                                                 setDismissedCallId(pending.toolCallId)

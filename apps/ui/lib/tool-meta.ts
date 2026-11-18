@@ -146,6 +146,7 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
     mcp_login: PlugIcon,
     mcp_login_complete: PlugIcon,
     mcp_status: PlugIcon,
+    mcp_search: SearchIcon,
 
     card_table: DatabaseIcon,
     card_file: FileIcon,
@@ -201,6 +202,7 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
     open_brain_page: BrainIcon,
     read_attachment: FileSearchIcon,
     search_docs: BookOpenIcon,
+    rerun_hub_search_docs: BookOpenIcon,
     analyze_website: GlobeIcon,
     save_profile: UsersIcon,
     save_needs: UsersIcon,

@@ -114,19 +114,18 @@
         },
         "credit": {
             "addedTitle": "Créditos adicionados",
-            "addedBody": "Agora você recebe {count, plural, one {# crédito} other {# créditos}} todo mês. Seus coworkers continuam de onde pararam.",
-            "unchangedBody": "Seus créditos continuam iguais até a renovação.",
-            "title": "Adicionar créditos Rerun",
-            "eachPack": "Cada pacote adiciona {count, plural, one {# crédito} other {# créditos}} por mês, por {price}.",
+            "addedBody": "{count, plural, one {# crédito está} other {# créditos estão}} no seu workspace. Eles nunca expiram, e seus coworkers continuam de onde pararam.",
+            "title": "Comprar créditos Rerun",
+            "eachPack": "Cada pacote adiciona {count, plural, one {# crédito} other {# créditos}} por {price}, pago uma vez. Eles nunca expiram.",
             "packs": "{count, plural, one {# pacote} other {# pacotes}}",
-            "perMonth": "+{count, plural, one {# crédito} other {# créditos}} por mês",
+            "packCredits": "{count, plural, one {# crédito} other {# créditos}}, sem expiração",
             "lessAria": "Um pacote a menos",
             "moreAria": "Um pacote a mais",
-            "then": "Depois",
-            "add": "Adicionar créditos",
-            "pickPacks": "Escolha um número de pacotes",
-            "removeAtRenewal": "Remover na renovação",
-            "chargedNow": "Cobrado agora, proporcional até a renovação."
+            "dueBeforeTax": "A pagar hoje, sem impostos",
+            "buy": "Comprar créditos",
+            "payOnStripe": "Pagar no Stripe",
+            "chargedOnce": "Cobrado uma única vez neste cartão.",
+            "checkoutFootnote": "Você paga em uma página segura do Stripe e depois volta para cá."
         }
     },
     "apps": {
@@ -376,8 +375,6 @@
                 "bodyNoCoworker": "Seu coworker está pronto para retomar a tarefa. Seu recibo está a caminho por e-mail.",
                 "credits": "Créditos",
                 "creditsValue": "{credits, plural, one {# crédito} other {# créditos}} por mês",
-                "models": "Modelos",
-                "modelsValue": "Todos os modelos premium",
                 "coworkers": "Coworkers",
                 "coworkersValue": "Ilimitados",
                 "resume": "Retomar a tarefa"
@@ -453,7 +450,7 @@
             "autopilot": "<b>Piloto automático</b> para o seu negócio",
             "trial": {
                 "agents": "<b>{count} coworkers</b> durante o teste, ilimitados no Pro",
-                "teammates": "Convide <b>sua equipe</b> quando o Pro começar",
+                "teammates": "Convide <b>sua equipe</b> desde o primeiro dia",
                 "credit": "<b>{credits, plural, one {# crédito} other {# créditos}} de uso de IA</b>, depois {monthly, number} por mês"
             },
             "pro": {
@@ -498,11 +495,6 @@
                 "trial": "{credits, plural, one {# crédito} other {# créditos}}, uma vez",
                 "pro": "{credits, plural, one {# crédito} other {# créditos}} todo mês"
             },
-            "models": {
-                "title": "Modelos",
-                "trial": "Modelos mais leves",
-                "pro": "Todos os modelos premium liberados"
-            },
             "coworkers": {
                 "title": "Coworkers",
                 "trial": "{count} ativos",
@@ -512,17 +504,12 @@
                 "title": "Colegas",
                 "trial": "Só você",
                 "pro": "Convide toda a sua equipe"
-            },
-            "topup": {
-                "title": "Recargas",
-                "trial": "Indisponível",
-                "pro": "+{credits, plural, one {# crédito} other {# créditos}} quando precisar"
             }
         },
         "headlines": {
             "credits": "{credits, plural, one {# crédito/mês} other {# créditos/mês}}",
-            "models": "Modelos premium",
-            "coworkers": "Coworkers ilimitados"
+            "coworkers": "Coworkers ilimitados",
+            "team": "Convide sua equipe"
         }
     },
     "cancel": {

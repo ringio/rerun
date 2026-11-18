@@ -1,0 +1,92 @@
+---
+title: "Vault"
+description: "Read the accounts, secrets and MCP servers your workspace keeps once for its coworkers, lend them out and delete them."
+---
+
+The [Vault](/vault) is where your workspace keeps the accounts and keys its coworkers share: the apps you signed in to, the secrets you added, the MCP servers you registered, and the accounts of paid apps. These tools act with the access of the member who created the key, the same rules as the app: see [Who can do what](/vault#who-can-do-what).
+
+<Warning>
+  No value ever comes out of the Vault, and none goes in. The tools name an entry, say whether it works and who holds it. Adding an entry, signing in to it and typing its credentials happen in the Rerun app, never through the API.
+</Warning>
+
+## list_vault
+
+Lists everything the Vault holds. Takes no parameter.
+
+| Field | What it holds |
+| --- | --- |
+| `available` | `false` when the workspace's machine keeps no Vault yet. Its apps are then connected coworker by coworker, with `attach_connector`. |
+| `entries` | The apps, MCP servers and secrets of the Vault |
+| `paidAccounts` | The accounts of paid apps, like LinkedIn Pro and WhatsApp Pro |
+| `coworkers` | The coworkers the key can see, with `canManage` when it may switch an entry on for them |
+| `canAdd` | Whether the key's member may add to the Vault, in the app |
+| `isAdmin` | Whether the key's member is an admin |
+
+Each entry carries:
+
+| Field | What it holds |
+| --- | --- |
+| `id` | The entry's id |
+| `name` | The app, server or secret name |
+| `kind` | `service` for an app of the library, `mcp` for an MCP server, `secret` for a secret |
+| `slug` | The library slug, for an app |
+| `account` | Which account it is: an email, a workspace name |
+| `status` | `active`, `needs_auth` (waiting for a sign-in) or `needs_config` (waiting for a credential) |
+| `sharedWithAll` | `true` when every coworker gets it, including the ones added later |
+| `coworkers` | The coworkers that get it, `id` and `name` |
+| `hiddenCoworkers` | How many more get it in Boxes the key cannot see |
+| `canChange` | Whether the key's member may change it |
+
+A paid account carries its `id`, `slug`, `name`, `account`, `status` (`connected`, `connecting`, `needs_reconnect` or `paused`), `coworkers` and `hiddenCoworkers`.
+
+## attach_vault_entry
+
+Switches a Vault entry on for one coworker: an app account already signed in, an MCP server or a secret, so it never has to be connected twice. Works for a paid account too. Needs **Can manage** on the coworker's Box.
+
+<ParamField body="entryId" type="string" required>
+  The `id` of an entry or of a paid account, from `list_vault`.
+</ParamField>
+
+<ParamField body="agentId" type="string" required />
+
+A coworker cannot get the same variable or the same server name from two entries: the call is refused with **already gets {name} from another Vault entry**, followed by the name and the `id` of that entry. Returns the entry as `list_vault` shows it.
+
+## detach_vault_entry
+
+Switches a Vault entry off for one coworker. The entry stays in the Vault, for the other coworkers and for later. Needs **Can manage** on the coworker's Box.
+
+<ParamField body="entryId" type="string" required>
+  The `id` of an entry or of a paid account, from `list_vault`.
+</ParamField>
+
+<ParamField body="agentId" type="string" required />
+
+An entry every coworker gets cannot be switched off for one of them: switch `sharedWithAll` off with `share_vault_entry` first. Returns the entry as `list_vault` shows it.
+
+## share_vault_entry
+
+Gives a Vault entry to every coworker, including the ones added later, or takes it back to the coworkers it was switched on for one by one. Admins only.
+
+<ParamField body="entryId" type="string" required>
+  The `id` of an entry, from `list_vault`.
+</ParamField>
+
+<ParamField body="sharedWithAll" type="boolean" required>
+  `true` for every coworker. `false` restores the selection the entry had before.
+</ParamField>
+
+A paid account is lent coworker by coworker and cannot be shared with every coworker. Returns the entry as `list_vault` shows it.
+
+## delete_vault_entry
+
+Deletes a Vault entry for good. Every coworker that got it loses it, its credentials are erased, and a Composio account behind it is disconnected. Admins only.
+
+<ParamField body="entryId" type="string" required>
+  The `id` of an entry, from `list_vault`.
+</ParamField>
+
+<ParamField body="confirm" type="boolean" required>
+  Must be `true`.
+</ParamField>
+
+Returns `detached`, the coworkers that lost it. A paid account has its own subscription and is not deleted here: switch it off with `detach_vault_entry`, and end it in the app.

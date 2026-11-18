@@ -22,6 +22,7 @@ import { createClient } from '@/supabase/client'
 import { selectMany } from '@/supabase/supabase-helpers'
 import { create } from 'zustand'
 import type { AgentFocusTab, AgentLink, GridPosition, InteractionMode, IsoAgent, SessionEntry, SessionStatus, SpacePublic } from '../lib/board/types'
+import type { SidebarOrderWrite } from '../lib/workspace-view'
 import { agentFromRow, computeAgentStatus } from '../lib/board/types'
 import { AGENT_SPAN, isPlaced } from '@/lib/board/iso'
 import { fetchLiveSessions, sweepZombieSessions } from '@/lib/board/live-sessions'
@@ -77,6 +78,17 @@ export type PlacementQueue = {
     installing: boolean
 }
 
+// What can be created on the board, before it is known where: dropped on the grid in the 3D view,
+// straight into a Box in the Simple view. `spaceId` is the Box a scratch coworker was asked from.
+export type CreationRequest =
+    | { kind: 'scratch'; draft: PendingAgentDraft; spaceId?: string | null }
+    | { kind: 'template'; slug: string; title: string; agentNames: string[]; again?: boolean }
+    | { kind: 'share'; token: string; agentName: string }
+    | { kind: 'duplicate'; agentId: string; agentName: string; spaceId?: string | null }
+
+// Where a creation goes: placed by hand on the 3D grid, or put by the server in a Box of the list.
+export type CreationFrame = 'board' | 'list'
+
 export function placementLabel(queue: PlacementQueue): string {
     return queue.labels[queue.placed.length] ?? queue.labels[queue.labels.length - 1] ?? ''
 }
@@ -104,6 +116,9 @@ type BoardState = {
     selectedSpaceId: string | null
     placingAgentId: string | null
     placement: PlacementQueue | null
+    creationFrame: CreationFrame
+    // A creation asked from the Simple view in a workspace with several Boxes: it waits for one.
+    boxChoice: CreationRequest | null
     startingFirstAgent: boolean
     pendingSelectAgentId: string | null
     pendingOpenSession: { agentId: string; sessionId: string; runId: string | null; title?: string } | null
@@ -120,6 +135,10 @@ type BoardState = {
     beginTemplatePlacement: (template: { slug: string; title: string; agentNames: string[]; again?: boolean }) => void
     beginAgentSharePlacement: (share: { token: string; agentName: string }) => void
     beginAgentDuplicatePlacement: (agent: { agentId: string; agentName: string }) => void
+    setCreationFrame: (frame: CreationFrame) => void
+    requestCreation: (request: CreationRequest, viewer: BoxViewer) => void
+    chooseBox: (spaceId: string | null, viewer: BoxViewer) => void
+    placeInBox: (request: CreationRequest, spaceId: string, viewer: BoxViewer) => Promise<void>
     setStartingFirstAgent: (v: boolean) => void
     finalizeAgentCreation: (agentId: string, description?: string, kickoff?: string) => void
     sendPendingKickoff: (agentId?: string) => Promise<{ agentId: string; sessionId: string } | null>
@@ -129,7 +148,11 @@ type BoardState = {
     confirmPlacement: (pos: GridPosition, viewer: BoxViewer) => void
     cancelPlacement: () => void
     moveAgent: (id: string, pos: GridPosition, spaceId: string | undefined, viewer: BoxViewer) => void
-    moveAgentToBox: (id: string, spaceId: string, viewer: BoxViewer) => void
+    // `sidebarOrder`: where it lands in its new Box in the Simple view's list, at its end without it.
+    moveAgentToBox: (id: string, spaceId: string, viewer: BoxViewer, sidebarOrder?: number) => void
+    // The Simple view's list: the writes `sidebarOrderWrites` gives, for Boxes or for coworkers.
+    orderSpaces: (writes: SidebarOrderWrite[], viewer: BoxViewer) => void
+    orderAgents: (writes: SidebarOrderWrite[], viewer: BoxViewer) => void
     renameAgent: (id: string, name: string) => void
     removeAgent: (id: string) => void
     setSessionStatus: (sessionId: string, status: SessionStatus) => void
@@ -240,6 +263,7 @@ const initialState = {
     selectedSpaceId: null,
     placingAgentId: null,
     placement: null as PlacementQueue | null,
+    boxChoice: null as CreationRequest | null,
     startingFirstAgent: false,
     pendingSelectAgentId: null as string | null,
     pendingOpenSession: null as { agentId: string; sessionId: string; runId: string | null; title?: string } | null,
@@ -249,19 +273,88 @@ const initialState = {
     hydrated: false,
 }
 
+type Creator = Pick<BoardState, 'finalizeAgentCreation' | 'selectAgentWhenReady'>
+
+// Creates what a placement or a Box picked in the list holds, in `space`. `positions` are the cells
+// dropped on the grid; without them the server finds free ones, and a full Box leaves the coworker
+// unplaced, listed, for the 3D view to offer a spot.
+async function createFromSource(store: Creator, source: PlacementSource, space: Pick<SpacePublic, 'id' | 'workspace_id'>, positions: GridPosition[] | null): Promise<void> {
+    const position = positions?.[0]
+    try {
+        if (source.kind === 'scratch') {
+            const draft = source.draft
+            const res = await createAgentWithSetupAction({ serviceSlugs: draft.serviceSlugs, name: draft.name, description: draft.description, workspaceId: space.workspace_id as number, spaceId: space.id, col: position?.col, row: position?.row })
+            if (!res.ok) return
+            // Le plan plafonne les agents actifs, pas les agents créés : celui-ci est
+            // complet mais ne tournera pas tant qu'un slot ne s'est pas libéré.
+            if (!res.active) toast.warning(translated('builder.boardToasts.createdInactive', { name: draft.name }), { description: translated('builder.boardToasts.createdInactiveHint') })
+            store.finalizeAgentCreation(res.agentId, draft.description, draft.kickoff)
+            return
+        }
+
+        if (source.kind === 'share') {
+            const res = await installSharedAgentAction({ token: source.token, spaceId: space.id, position })
+            if (!res.ok) {
+                toast.error(translated('builder.boardToasts.addFailed'), { description: refusalText(res) })
+                return
+            }
+            track('agent_share_installed', { inactive: res.inactive })
+            reportShareInstall(res)
+            store.selectAgentWhenReady(res.agentId)
+            return
+        }
+
+        if (source.kind === 'duplicate') {
+            const res = await duplicateAgentAction({ agentId: source.agentId, spaceId: space.id, position })
+            if (!res.ok) {
+                toast.error(translated('builder.boardToasts.duplicateFailed'), { description: refusalText(res) })
+                return
+            }
+            track('agent_duplicated', { schedules: res.schedules.length, triggers: res.triggers.length })
+            reportDuplicate(res)
+            store.selectAgentWhenReady(res.agentId)
+            return
+        }
+
+        const res = await installTemplateAction({ slug: source.slug, spaceId: space.id, positions: positions ?? undefined, again: source.again })
+        if (!res.ok) {
+            toast.error(translated('builder.boardToasts.importFailed'), { description: refusalText(res) })
+            return
+        }
+        track('template_import_completed', { slug: source.slug, imported: res.imported, failed: res.failed.length })
+        reportInstall(res, source.title)
+        if (res.agentIds[0]) store.selectAgentWhenReady(res.agentIds[0])
+    } catch (err) {
+        // Un agent créé de zéro échoue en silence : l'insert realtime n'arrivera pas, rien
+        // à nettoyer. Un import est plus long et peut mourir en vol (timeout, déploiement)
+        // après avoir posé une partie du lot, donc on le dit plutôt que d'inviter à
+        // réimporter par-dessus.
+        if (source.kind !== 'scratch') toast.error(translated('builder.boardToasts.importInterrupted'), { description: err instanceof Error ? err.message : translated('builder.boardToasts.importInterruptedHint') })
+    }
+}
+
+function sourceOf(request: CreationRequest): PlacementSource {
+    if (request.kind === 'scratch') return { kind: 'scratch', draft: request.draft }
+    if (request.kind === 'template') return { kind: 'template', slug: request.slug, title: request.title, again: request.again }
+    if (request.kind === 'share') return { kind: 'share', token: request.token, title: request.agentName }
+    return { kind: 'duplicate', agentId: request.agentId, title: request.agentName }
+}
+
 export const useBoardStore = create<BoardState>((set, get) => ({
     ...initialState,
     // Hors d'initialState à dessein : un compteur que reset() ramènerait à 0 se lirait comme un
     // nouvel ordre côté grille, qui ne compare que des valeurs.
     recenterSignal: 0,
     cameraFocus: null,
+    // Outside initialState too: it is the frame on screen, which a workspace switch does not change.
+    creationFrame: 'board',
 
     reset: () => set({ ...initialState }),
 
     hydrate: async (workspaceId: number) => {
         const [agentsResult, spacesResult, grantsResult] = await Promise.all([
-            selectMany(supabase, 'agents', ['id', 'name', 'handle', 'description', 'template_id', 'status', 'col', 'row', 'workspace_id', 'space_id', 'created_at', 'disabled_at', 'disabled_reason'] as const, { workspace_id: workspaceId }),
-            selectMany(supabase, 'spaces', ['id', 'workspace_id', 'name', 'col_start', 'row_start', 'col_end', 'row_end', 'created_at', 'visibility'] as const, { workspace_id: workspaceId }),
+            selectMany(supabase, 'agents', ['id', 'name', 'handle', 'description', 'template_id', 'status', 'col', 'row', 'workspace_id', 'space_id', 'created_at', 'disabled_at', 'disabled_reason', 'sidebar_order'] as const, { workspace_id: workspaceId }),
+            selectMany(supabase, 'spaces', ['id', 'workspace_id', 'name', 'col_start', 'row_start', 'col_end', 'row_end', 'created_at', 'visibility', 'sidebar_order'] as const, { workspace_id: workspaceId }),
             selectMany(supabase, 'space_members', ['space_id', 'user_id', 'access'] as const, { workspace_id: workspaceId }),
         ])
 
@@ -323,6 +416,53 @@ export const useBoardStore = create<BoardState>((set, get) => ({
             selectedAgentId: null,
             selectedSpaceId: null,
         })
+    },
+
+    setCreationFrame: creationFrame => set({ creationFrame }),
+
+    // The one way in for anything created: the grid's placement queue in the 3D view, a Box in the
+    // Simple view. There, a coworker asked from a Box goes to it (a copy to its original's), a
+    // workspace with a single Box the caller manages uses it, and with several the caller picks one
+    // (BoxPickerDialog).
+    requestCreation: (request, viewer) => {
+        if (get().creationFrame === 'board') {
+            if (request.kind === 'scratch') get().beginAgentPlacement(request.draft, request.spaceId ?? null)
+            else if (request.kind === 'template') get().beginTemplatePlacement(request)
+            else if (request.kind === 'share') get().beginAgentSharePlacement(request)
+            else get().beginAgentDuplicatePlacement(request)
+            return
+        }
+        const asked = request.kind === 'scratch' || request.kind === 'duplicate' ? request.spaceId : null
+        if (asked) {
+            void get().placeInBox(request, asked, viewer)
+            return
+        }
+        const manageable = get().spaces.filter(space => managesBoxes(get(), viewer, [space.id]))
+        if (manageable.length === 0) {
+            refuseUnmanagedBox()
+            return
+        }
+        if (manageable.length === 1) {
+            void get().placeInBox(request, manageable[0].id, viewer)
+            return
+        }
+        set({ boxChoice: request })
+    },
+
+    chooseBox: (spaceId, viewer) => {
+        const request = get().boxChoice
+        set({ boxChoice: null })
+        if (request && spaceId) void get().placeInBox(request, spaceId, viewer)
+    },
+
+    placeInBox: async (request, spaceId, viewer) => {
+        const space = get().spaces.find(s => s.id === spaceId)
+        if (!space) return
+        if (!managesBoxes(get(), viewer, [space.id])) {
+            refuseUnmanagedBox()
+            return
+        }
+        await createFromSource(get(), sourceOf(request), space, null)
     },
 
     setStartingFirstAgent: v => {
@@ -408,55 +548,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
             const source = placement.source
             ;(async () => {
                 try {
-                    if (source.kind === 'scratch') {
-                        const draft = source.draft
-                        const res = await createAgentWithSetupAction({ serviceSlugs: draft.serviceSlugs, name: draft.name, description: draft.description, workspaceId: space.workspace_id as number, spaceId: space.id, col: pos.col, row: pos.row })
-                        if (!res.ok) return
-                        // Le plan plafonne les agents actifs, pas les agents créés : celui-ci est
-                        // complet mais ne tournera pas tant qu'un slot ne s'est pas libéré.
-                        if (!res.active) toast.warning(translated('builder.boardToasts.createdInactive', { name: draft.name }), { description: translated('builder.boardToasts.createdInactiveHint') })
-                        get().finalizeAgentCreation(res.agentId, draft.description, draft.kickoff)
-                        return
-                    }
-
-                    if (source.kind === 'share') {
-                        const res = await installSharedAgentAction({ token: source.token, spaceId: space.id, position: pos })
-                        if (!res.ok) {
-                            toast.error(translated('builder.boardToasts.addFailed'), { description: refusalText(res) })
-                            return
-                        }
-                        track('agent_share_installed', { inactive: res.inactive })
-                        reportShareInstall(res)
-                        get().selectAgentWhenReady(res.agentId)
-                        return
-                    }
-
-                    if (source.kind === 'duplicate') {
-                        const res = await duplicateAgentAction({ agentId: source.agentId, spaceId: space.id, position: pos })
-                        if (!res.ok) {
-                            toast.error(translated('builder.boardToasts.duplicateFailed'), { description: refusalText(res) })
-                            return
-                        }
-                        track('agent_duplicated', { schedules: res.schedules.length, triggers: res.triggers.length })
-                        reportDuplicate(res)
-                        get().selectAgentWhenReady(res.agentId)
-                        return
-                    }
-
-                    const res = await installTemplateAction({ slug: source.slug, spaceId: space.id, positions: step.positions, again: source.again })
-                    if (!res.ok) {
-                        toast.error(translated('builder.boardToasts.importFailed'), { description: refusalText(res) })
-                        return
-                    }
-                    track('template_import_completed', { slug: source.slug, imported: res.imported, failed: res.failed.length })
-                    reportInstall(res, source.title)
-                    if (res.agentIds[0]) get().selectAgentWhenReady(res.agentIds[0])
-                } catch (err) {
-                    // Un agent créé de zéro échoue en silence : l'insert realtime n'arrivera pas, rien
-                    // à nettoyer. Un import est plus long et peut mourir en vol (timeout, déploiement)
-                    // après avoir posé une partie du lot, donc on le dit plutôt que d'inviter à
-                    // réimporter par-dessus.
-                    if (source.kind !== 'scratch') toast.error(translated('builder.boardToasts.importInterrupted'), { description: err instanceof Error ? err.message : translated('builder.boardToasts.importInterruptedHint') })
+                    await createFromSource(get(), source, space, step.positions)
                 } finally {
                     set({ placement: null })
                 }
@@ -512,11 +604,13 @@ export const useBoardStore = create<BoardState>((set, get) => ({
             return
         }
 
+        // In another Box its rank in the Simple view's list means nothing: it joins the end of the new one.
+        const changesBox = !!target && target !== previous?.spaceId
         set(state => ({
-            agents: state.agents.map(a => (a.id === id ? { ...a, position: pos, spaceId: target ?? a.spaceId } : a)),
+            agents: state.agents.map(a => (a.id === id ? { ...a, position: pos, spaceId: target ?? a.spaceId, ...(changesBox && { sidebarOrder: null }) } : a)),
         }))
 
-        const patch: Database['public']['Tables']['agents']['Update'] = target ? { col: pos.col, row: pos.row, space_id: target } : { col: pos.col, row: pos.row }
+        const patch: Database['public']['Tables']['agents']['Update'] = target ? { col: pos.col, row: pos.row, space_id: target, ...(changesBox && { sidebar_order: null }) } : { col: pos.col, row: pos.row }
         supabase
             .from('agents')
             .update<Database['public']['Tables']['agents']['Update']>(patch)
@@ -527,25 +621,58 @@ export const useBoardStore = create<BoardState>((set, get) => ({
                 // retour en arrière la tuile resterait garée dans une Box où elle n'est jamais
                 // arrivée. On ne rembobine que si rien n'a bougé depuis.
                 set(state => ({
-                    agents: state.agents.map(a => (a.id === id && a.position.col === pos.col && a.position.row === pos.row ? { ...a, position: previous.position, spaceId: previous.spaceId } : a)),
+                    agents: state.agents.map(a => (a.id === id && a.position.col === pos.col && a.position.row === pos.row ? { ...a, position: previous.position, spaceId: previous.spaceId, sidebarOrder: previous.sidebarOrder } : a)),
                 }))
                 toast.error(translated('builder.boardToasts.moveAgentFailed'))
             })
     },
 
-    moveAgentToBox: (id, spaceId, viewer) => {
+    moveAgentToBox: (id, spaceId, viewer, sidebarOrder) => {
         if (!managesBoxes(get(), viewer, [get().agents.find(a => a.id === id)?.spaceId, spaceId])) {
             refuseUnmanagedBox()
             return
         }
         // Pas d'optimisme : c'est le serveur qui choisit la cellule libre, et l'annoncer avant de
         // la connaître ferait sauter la tuile deux fois.
-        moveAgentAction({ agentId: id, spaceId }).then(res => {
+        moveAgentAction({ agentId: id, spaceId, sidebarOrder }).then(res => {
             if (!res.ok) {
                 toast.error(translated('builder.boardToasts.moveAgentFailed'), { description: refusalText(res) })
                 return
             }
-            set(state => ({ agents: state.agents.map(a => (a.id === id ? { ...a, spaceId, position: res.position } : a)) }))
+            set(state => ({ agents: state.agents.map(a => (a.id === id ? { ...a, spaceId, position: res.position, sidebarOrder: sidebarOrder ?? null } : a)) }))
+        })
+    },
+
+    orderSpaces: (writes, viewer) => {
+        if (writes.length === 0) return
+        if (!managesBoxes(get(), viewer, writes.map(write => write.id))) {
+            refuseUnmanagedBox()
+            return
+        }
+        const previous = new Map(get().spaces.map(space => [space.id, space.sidebar_order ?? null]))
+        const next = new Map(writes.map(write => [write.id, write.order]))
+        set(state => ({ spaces: state.spaces.map(space => (next.has(space.id) ? { ...space, sidebar_order: next.get(space.id) } : space)) }))
+        Promise.all(writes.map(write => supabase.from('spaces').update<Database['public']['Tables']['spaces']['Update']>({ sidebar_order: write.order }).eq('id', write.id))).then(results => {
+            if (!results.some(result => result.error)) return
+            set(state => ({ spaces: state.spaces.map(space => (next.has(space.id) && space.sidebar_order === next.get(space.id) ? { ...space, sidebar_order: previous.get(space.id) ?? null } : space)) }))
+            toast.error(translated('builder.boardToasts.moveBoxFailed'))
+        })
+    },
+
+    orderAgents: (writes, viewer) => {
+        if (writes.length === 0) return
+        const agents = get().agents
+        if (!managesBoxes(get(), viewer, writes.map(write => agents.find(agent => agent.id === write.id)?.spaceId))) {
+            refuseUnmanagedBox()
+            return
+        }
+        const previous = new Map(agents.map(agent => [agent.id, agent.sidebarOrder ?? null]))
+        const next = new Map(writes.map(write => [write.id, write.order]))
+        set(state => ({ agents: state.agents.map(agent => (next.has(agent.id) ? { ...agent, sidebarOrder: next.get(agent.id) } : agent)) }))
+        Promise.all(writes.map(write => supabase.from('agents').update<Database['public']['Tables']['agents']['Update']>({ sidebar_order: write.order }).eq('id', write.id))).then(results => {
+            if (!results.some(result => result.error)) return
+            set(state => ({ agents: state.agents.map(agent => (next.has(agent.id) && agent.sidebarOrder === next.get(agent.id) ? { ...agent, sidebarOrder: previous.get(agent.id) ?? null } : agent)) }))
+            toast.error(translated('builder.boardToasts.moveAgentFailed'))
         })
     },
 

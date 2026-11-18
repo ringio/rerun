@@ -34,7 +34,11 @@
         "groups": [
           {
             "group": "Get started",
-            "pages": ["index", "quickstart", "concepts"]
+            "pages": ["index", "quickstart", "concepts", "desktop-app", "iphone-app"]
+          },
+          {
+            "group": "Your workspace",
+            "pages": ["chief-of-staff", "brain", "vault", "teams", "billing"]
           },
           {
             "group": "Build a coworker",
@@ -46,10 +50,6 @@
               "agents/human-in-the-loop",
               "agents/data"
             ]
-          },
-          {
-            "group": "Your account",
-            "pages": ["billing", "teams"]
           }
         ]
       },
@@ -87,7 +87,8 @@
               "self-host/services",
               "self-host/coworkers",
               "self-host/administration",
-              "self-host/mobile"
+              "self-host/mobile",
+              "self-host/desktop"
             ]
           },
           {
@@ -117,11 +118,13 @@
             "pages": [
               "api/tools/agents",
               "api/tools/skills",
+              "api/tools/memory-and-files",
               "api/tools/schedules",
               "api/tools/triggers",
               "api/tools/runs",
               "api/tools/databases",
               "api/tools/connectors",
+              "api/tools/vault",
               "api/tools/sharing",
               "api/tools/templates"
             ]

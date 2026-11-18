@@ -7,9 +7,10 @@ export const SIGNUP_INTENT_COOKIE = 'rr_signup_intent'
 export function sharedCookieDomain(hostname: string): string | undefined {
     return hostname.endsWith('rerun.build') ? '.rerun.build' : undefined
 }
-// Where the account form was shown. The wall is the one every anonymous visitor meets on arrival, so
-// it dwarfs the other two: the funnel is only readable when they are counted apart.
-export type SignupSurface = 'welcome_wall' | 'foreman_intake' | 'signin_dialog' | 'auth_page' | 'ready_made_arrival'
+// Where the account form was shown. Every account is born on the sign-in page since 17/11/2026: the
+// other surfaces (`welcome_wall`, `foreman_intake`, `signin_dialog`, `ready_made_arrival`) only remain
+// in the events sent before.
+export type SignupSurface = 'auth_page'
 // Before 2026-10-13 the phone form reported no step at all, so its abandons read 'email', and the
 // email code step read 'code'.
 export type SignupStep = 'phone' | 'phone_code' | 'email' | 'email_code'
@@ -109,7 +110,7 @@ export interface AnalyticsEventMap {
     // The card form opening. The lifecycle events below come from the webhook, so this is the only
     // place an abandoned checkout leaves a trace. A trial started without a card never opens it,
     // and is not counted here.
-    checkout_started: { plan: string; source: 'template_cta' | 'billing_dialog' | 'agent_share' | 'foreman' | 'pay_now' | 'ai_providers' }
+    checkout_started: { plan: string; source: 'template_cta' | 'billing_dialog' | 'agent_share' | 'foreman' | 'pay_now' | 'ai_providers' | 'onboarding' }
     paywall_viewed: { trigger: string; addon_shown?: string; variant?: string }
     // `origin` is where the trial was started: the app's are all cardless, whatever the test's arm.
     trial_started: SubscriptionLifecycleProps & { trial_type: TrialType; origin?: 'web' | 'ios' | 'android' }
@@ -145,10 +146,6 @@ export interface AnalyticsEventMap {
     retention_offer_declined: { phase: CancelFlowPhase; reason: string; offer: string }
     invoice_paid: SubscriptionLifecycleProps & { invoice_id: string; amount_paid: number; billing_reason?: string }
 
-    // The account gate that replaces the foreman's composer once an anonymous visitor has answered
-    // the welcome card. Shown is not clicked: the gap with `signup_started` is the whole drop between
-    // a filled card and an account.
-    signup_gate_viewed: { surface: SignupSurface }
     signup_started: { surface?: SignupSurface; in_app_browser?: string }
     signup_method_selected: { method: SignupMethod; in_app_browser?: string }
     // A provider sign-in that came back failed. Supabase sends these returns to `/`, not to
@@ -203,7 +200,7 @@ export interface AnalyticsEventMap {
     // Sending an agent to someone by link. `carries_*` is what will say, in a month, whether the
     // safe defaults held or whether everybody turns everything on.
     agent_share_created: { carries_memories: boolean; carries_database: boolean; carries_files: boolean }
-    agent_share_opened: { has_account: boolean }
+    agent_share_opened: Record<string, never>
     agent_share_installed: { inactive: boolean }
 
     // Copying an agent inside its own Box. The two counts say what the copy carries that now runs
@@ -217,14 +214,19 @@ export interface AnalyticsEventMap {
     onboarding_step_viewed: { step: string }
     // `via` is only on the plan step, which closes four ways: the plan card confirmed, a template
     // picked on its own card, coworkers hired off the starter pack, or the one coworker they
-    // described instead of picking.
-    onboarding_step_completed: { step: string; via?: 'plan_card' | 'template' | 'starter_pack' | 'custom' }
+    // described instead of picking. `skipped` on the welcome page's site and team steps.
+    onboarding_step_completed: { step: string; via?: 'plan_card' | 'template' | 'starter_pack' | 'custom'; skipped?: boolean }
+    // The welcome page handed over to the Chief of Staff. `engine` is false when they went in while
+    // their machine had not answered yet.
+    onboarding_completed: { engine: boolean }
     // The chips under a freshly built team: 'open_chat', 'billing', or the label of a request sent to the foreman.
     onboarding_next_step_clicked: { step: string }
     // The board's getting-started checklist. `completed` is server-side, the moment the thing exists;
     // `clicked` is the step handed to the Foreman. Kept apart from `onboarding_step_*`, the funnel's.
     getting_started_step_completed: { step: string }
     getting_started_step_clicked: { step: string }
+    // The 3D board or the Simple view, picked by hand in the workspace menu.
+    workspace_view_switched: { view: 'board' | 'simple' }
     // Days added to a running trial, and what earned them.
     trial_extended: { days: number; source: 'getting_started' }
     // The welcome card's submit. `industry` is where the card ended: picked by hand, or decided from
@@ -324,6 +326,8 @@ export interface AnalyticsEventMap {
     // workspace trial's, the subscriber's free week. `app_trial_converted` reads the end of that week.
     app_connected: { app: string; allowance: string; reconnect: boolean }
     app_slot_added: { app: string; trial_slot: boolean }
+    // A lifetime workspace sent to Checkout for its first slot.
+    app_slot_checkout: { app: string; trial: boolean }
     app_trial_started: { app: string }
     app_trial_converted: { app: string; outcome: 'charged' | 'declined' | 'nothing_to_charge' }
     // A coworker stopped by a daily limit: how often the caps bite, and on what.

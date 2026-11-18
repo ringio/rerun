@@ -1,8 +1,9 @@
-import { parseServiceRegistryKey } from '@rerun/contracts'
 import { workspaceActor } from '@/app/api/_auth/access'
 import { getCustomMcpServer } from '@/app/api/_services/custom-mcp.service'
 import { getServiceDetails, loadManifest } from '@/app/api/_services/services.service'
-import { composioConfigured, composioUserId, initiateConnectedAccount } from '@/lib/composio/client'
+import { composioConfigured, initiateConnectedAccount } from '@/lib/composio/client'
+import { composioUserForKey } from '@/lib/vault/composio'
+import { resolveAgentTarget } from '@/app/api/_services/chat.service'
 import { COMPOSIO_COOKIE_PATH, COMPOSIO_COOKIE_PREFIX, type ComposioOAuthContext, composioCallbackUrl, createComposioState, encodeComposioContext } from '@/lib/composio/oauth'
 import { MANAGED_COOKIE_PATH, MANAGED_COOKIE_PREFIX, type ManagedOAuthContext, buildManagedAuthorizeUrl, createPkceState, encodeManagedContext, managedCallbackUrl } from '@/lib/managed/oauth'
 import { getManagedProvider } from '@/lib/managed/registry'
@@ -37,7 +38,6 @@ async function mcpOAuthRedirect(req: Request, target: { agentId: string; serverN
         clientId: clientInfo.clientId,
         clientSecret: clientInfo.clientSecret,
         redirectUri: callbackUrl(req),
-        scope: metadata.scopesSupported?.join(' '),
         mobileGrant: target.mobileGrant,
     }
     return redirect(buildAuthorizeUrl(metadata, ctx, challenge, state), { name: OAUTH_COOKIE_PREFIX + state, value: encodeContext(ctx), path: OAUTH_COOKIE_PATH })
@@ -62,7 +62,7 @@ export async function GET(req: Request) {
         // The ticket is spent here: the row it opens is where the callback parks the token, and what
         // the app claims afterwards with its bearer.
         await openPendingGrant(ticket)
-        const mobileGrant = mintCallbackGrant({ agentId, workspaceId, userId, jti })
+        const mobileGrant = mintCallbackGrant({ agentId, workspaceId, userId, jti, desktop: ticket.desktop })
 
         // The server's url is read off the agent now, never carried from the app: it is where the
         // token will be sent.
@@ -95,7 +95,8 @@ export async function GET(req: Request) {
             if (!method?.composio) throw new Error(`${details.name} has no Composio connection to set up.`)
 
             const state = createComposioState()
-            const userId = composioUserId(agentId, parseServiceRegistryKey(key).instanceId)
+            const { conn, engineAgentId } = await resolveAgentTarget(agentId, actor, 'manage')
+            const userId = await composioUserForKey(conn, workspaceId, engineAgentId, agentId, key)
             const { connectedAccountId, redirectUrl } = await initiateConnectedAccount(userId, method.composio.authConfigId, composioCallbackUrl(req, state))
             const ctx: ComposioOAuthContext = { agentId, key, toolkit: method.composio.toolkit, serverName: details.composio.serverName, connectedAccountId, mobileGrant }
             return redirect(redirectUrl, { name: COMPOSIO_COOKIE_PREFIX + state, value: encodeComposioContext(ctx), path: COMPOSIO_COOKIE_PATH })
@@ -105,6 +106,6 @@ export async function GET(req: Request) {
 
         throw new Error(`${details.name} has no sign-in waiting.`)
     } catch (err) {
-        return redirect(appReturnUrl({ ok: false, error: err instanceof Error ? err.message : 'Could not start the sign-in' }))
+        return redirect(appReturnUrl({ ok: false, error: err instanceof Error ? err.message : 'Could not start the sign-in' }, ticket.desktop))
     }
 }

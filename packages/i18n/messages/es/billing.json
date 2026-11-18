@@ -114,19 +114,18 @@
         },
         "credit": {
             "addedTitle": "Créditos añadidos",
-            "addedBody": "Ahora recibes {count, plural, one {# crédito} other {# créditos}} al mes. Tus coworkers retoman donde se quedaron.",
-            "unchangedBody": "Tus créditos siguen igual hasta tu renovación.",
-            "title": "Añadir créditos de Rerun",
-            "eachPack": "Cada pack añade {count, plural, one {# crédito} other {# créditos}} al mes, por {price}.",
+            "addedBody": "{count, plural, one {# crédito está} other {# créditos están}} en tu workspace. No caducan nunca, y tus coworkers retoman donde se quedaron.",
+            "title": "Comprar créditos de Rerun",
+            "eachPack": "Cada pack añade {count, plural, one {# crédito} other {# créditos}} por {price}, en un solo pago. No caducan nunca.",
             "packs": "{count, plural, one {# pack} other {# packs}}",
-            "perMonth": "+{count, plural, one {# crédito} other {# créditos}} al mes",
+            "packCredits": "{count, plural, one {# crédito} other {# créditos}}, sin caducidad",
             "lessAria": "Un pack menos",
             "moreAria": "Un pack más",
-            "then": "Después",
-            "add": "Añadir créditos",
-            "pickPacks": "Elige un número de packs",
-            "removeAtRenewal": "Quitar al renovar",
-            "chargedNow": "Se cobra ahora, prorrateado hasta tu renovación."
+            "dueBeforeTax": "A pagar hoy, sin impuestos",
+            "buy": "Comprar créditos",
+            "payOnStripe": "Pagar en Stripe",
+            "chargedOnce": "Se cobra una sola vez a esta tarjeta.",
+            "checkoutFootnote": "Pagas en una página segura de Stripe y luego vuelves aquí."
         }
     },
     "apps": {
@@ -376,8 +375,6 @@
                 "bodyNoCoworker": "Tu coworker está listo para retomar la tarea. Tu recibo va de camino por email.",
                 "credits": "Créditos",
                 "creditsValue": "{credits, plural, one {# crédito} other {# créditos}} al mes",
-                "models": "Modelos",
-                "modelsValue": "Todos los modelos premium",
                 "coworkers": "Coworkers",
                 "coworkersValue": "Ilimitados",
                 "resume": "Retomar la tarea"
@@ -453,7 +450,7 @@
             "autopilot": "<b>Piloto automático</b> para tu negocio",
             "trial": {
                 "agents": "<b>{count} coworkers</b> durante la prueba, ilimitados en Pro",
-                "teammates": "Invita a <b>tu equipo</b> cuando empiece Pro",
+                "teammates": "Invita a <b>tu equipo</b> desde el primer día",
                 "credit": "<b>{credits, plural, one {# crédito} other {# créditos}} de uso de IA</b>, luego {monthly, number} al mes"
             },
             "pro": {
@@ -498,11 +495,6 @@
                 "trial": "{credits, plural, one {# crédito} other {# créditos}}, una vez",
                 "pro": "{credits, plural, one {# crédito} other {# créditos}} cada mes"
             },
-            "models": {
-                "title": "Modelos",
-                "trial": "Modelos más ligeros",
-                "pro": "Todos los modelos premium desbloqueados"
-            },
             "coworkers": {
                 "title": "Coworkers",
                 "trial": "{count} activos",
@@ -512,17 +504,12 @@
                 "title": "Compañeros",
                 "trial": "Solo tú",
                 "pro": "Invita a todo tu equipo"
-            },
-            "topup": {
-                "title": "Recargas",
-                "trial": "No disponible",
-                "pro": "+{credits, plural, one {# crédito} other {# créditos}} cuando los necesites"
             }
         },
         "headlines": {
             "credits": "{credits, plural, one {# crédito/mes} other {# créditos/mes}}",
-            "models": "Modelos premium",
-            "coworkers": "Coworkers ilimitados"
+            "coworkers": "Coworkers ilimitados",
+            "team": "Invita a tu equipo"
         }
     },
     "cancel": {

@@ -4,16 +4,16 @@ import { APP_INFO, type AppInfo } from './catalog'
 import { LINKEDIN_WEBHOOK_EVENTS, linkedinProfile, linkedinSignInRefusal } from './linkedin/connect'
 import * as linkedinEvents from './linkedin/events'
 import * as linkedinQuotas from './linkedin/quotas'
-import { LINKEDIN_TOOLS } from './linkedin/tools'
-import { deleteAccount, type LinkupPlatform } from './linkup/client'
-import { WHATSAPP_WEBHOOK_EVENTS, whatsappProfile, whatsappSignInRefusal } from './whatsapp/connect'
+import { LINKEDIN_SCOPES, LINKEDIN_TOOLS } from './linkedin/tools'
+import { deleteAccount, type LinkupError, type LinkupPlatform } from './linkup/client'
+import { WHATSAPP_WEBHOOK_EVENTS, whatsappProfile, whatsappSessionClosed, whatsappSignInRefusal } from './whatsapp/connect'
 import * as whatsappEvents from './whatsapp/events'
 import * as whatsappQuotas from './whatsapp/quotas'
-import { WHATSAPP_TOOLS } from './whatsapp/tools'
+import { WHATSAPP_SCOPES, WHATSAPP_TOOLS } from './whatsapp/tools'
 import type { AttachmentSummary } from './attachments'
 import type { AttachmentRef } from './linkup/client'
 import type { EnvelopeKind, LinkupEnvelope } from './linkup/envelope'
-import type { AppTool } from './tools'
+import type { AppScope, AppTool } from './tools'
 import { APP_ADDON_KEYS, type AppSlug } from './types'
 
 // What the socle needs to know about one paid app on the server. Adding an app is one entry here,
@@ -24,6 +24,7 @@ export type AppDefinition = AppInfo & {
     platform: LinkupPlatform
     webhookEvents: readonly string[]
     tools: AppTool[]
+    scopes: Record<string, AppScope>
     quotaClaim(action: string, at: Date): { periods: string[]; maxes: number[] }
     quotaRefusal(action: string): string
     envelopeKind(envelope: LinkupEnvelope): EnvelopeKind
@@ -36,6 +37,10 @@ export type AppDefinition = AppInfo & {
     profile(accountId: string): Promise<{ label: string; memberId: string }>
     // What the person reads when the provider turns the sign-in down.
     signInRefusal(message: string): { code: ErrorCode; params?: ErrorParams }
+    // A provider failure that means the account is gone, which the provider does not say as such.
+    sessionClosed?(err: LinkupError): boolean
+    // What a coworker without an account can still read elsewhere, told when it is refused one.
+    readWithoutAccount?: string
     deleteProviderAccount: (accountId: string) => Promise<void>
 }
 
@@ -46,6 +51,7 @@ const APPS: Record<AppSlug, AppDefinition> = {
         platform: 'linkedin',
         webhookEvents: LINKEDIN_WEBHOOK_EVENTS,
         tools: LINKEDIN_TOOLS,
+        scopes: LINKEDIN_SCOPES,
         quotaClaim: linkedinQuotas.quotaClaim,
         quotaRefusal: linkedinQuotas.quotaRefusal,
         envelopeKind: linkedinEvents.envelopeKind,
@@ -55,6 +61,7 @@ const APPS: Record<AppSlug, AppDefinition> = {
         profile: linkedinProfile,
         signInRefusal: linkedinSignInRefusal,
         deleteProviderAccount: deleteAccount,
+        readWithoutAccount: 'Public LinkedIn profiles, posts and company pages need no account: read them with paid_data.',
     },
     whatsapp: {
         ...APP_INFO.whatsapp,
@@ -62,6 +69,7 @@ const APPS: Record<AppSlug, AppDefinition> = {
         platform: 'whatsapp',
         webhookEvents: WHATSAPP_WEBHOOK_EVENTS,
         tools: WHATSAPP_TOOLS,
+        scopes: WHATSAPP_SCOPES,
         quotaClaim: whatsappQuotas.quotaClaim,
         quotaRefusal: whatsappQuotas.quotaRefusal,
         envelopeKind: whatsappEvents.envelopeKind,
@@ -70,6 +78,7 @@ const APPS: Record<AppSlug, AppDefinition> = {
         wakeTrigger: { name: 'WhatsApp messages', description: 'Created by WhatsApp Pro. Fired by Rerun when a message reaches the WhatsApp number.', prompt: whatsappEvents.wakeTriggerPrompt },
         profile: whatsappProfile,
         signInRefusal: whatsappSignInRefusal,
+        sessionClosed: whatsappSessionClosed,
         deleteProviderAccount: deleteAccount,
     },
 }

@@ -10,11 +10,11 @@ import {
     BILLING_INTERVALS,
     PLAN_CURRENCY,
     ZERO_QUANTITIES,
+    baseLimitsToColumns,
     basePriceCents,
     isLifetimePlan,
     parsePriceArm,
     planPriceCents,
-    quantitiesToColumns,
     type AddonQuantities,
     type BillingInterval,
     type PriceArm,
@@ -44,6 +44,7 @@ import { ARCHIVE_RETENTION_DAYS } from '@/lib/archive/retention'
 import { canEndTrialNow, isMachineEntitled, isSubscriptionEntitled } from '@/ee/lib/billing/entitlement'
 import { BOX_DELETION_GRACE_MS } from '@/ee/lib/billing/grace'
 import { isTemplateSubscription, stripeTimestampIso, subscriptionPeriodEndIso } from '@/ee/lib/billing/marketplace'
+import { isLifetimeAddonsSubscription } from '@/ee/lib/billing/lifetime-addons'
 import { isSameSubscription, shouldAdoptSubscription } from '@/ee/lib/billing/ownership'
 import { hasPeriodAdvanced, rerunPeriodUpdate } from '@/ee/lib/billing/period'
 import { trialArm } from '@/ee/lib/billing/trial-experiment'
@@ -78,7 +79,6 @@ import { sendTrialStartedReceipt } from '@/ee/lib/lifecycle/trial-receipt'
 import { reportSubscriptionCancelled, reportSubscriptionTransition, reportTrialConverted, reportTrialPaymentFailed } from './billing-analytics.service'
 import { requestBoxRestore } from '@rerun/cloud/engines'
 import { resolveEngineWaitlist } from '@/app/api/_services/waitlist.service'
-import { syncEnginePlan } from '@/app/api/_services/workspace-engine.service'
 import type Stripe from 'stripe'
 
 type WorkspaceUpdate = Database['public']['Tables']['workspaces']['Update']
@@ -88,7 +88,7 @@ type WorkspaceUpdate = Database['public']['Tables']['workspaces']['Update']
 // there.
 export const PLAN_CARD_SETUP_KIND = 'plan_card_setup'
 
-const PLAN_PAYMENT_METHOD_TYPES: Stripe.Checkout.SessionCreateParams.PaymentMethodType[] = ['card', 'link']
+export const PLAN_PAYMENT_METHOD_TYPES: Stripe.Checkout.SessionCreateParams.PaymentMethodType[] = ['card', 'link']
 
 // The waitlist wall only lives in the browser, and a template or share sheet opened over it used to
 // start a trial on a workspace with no machine to give it. Every way onto the plan checks here.
@@ -228,8 +228,8 @@ async function basePlanCheckoutParams(): Promise<{ params: Omit<Stripe.Checkout.
 // throwing: the caller falls back on the card checkout, which knows how to bill a spent trial.
 // The app sells nothing and has no card checkout to fall back on, so a trial it starts skips the arm.
 export async function startCardlessTrial(client: ForemanClient = 'web'): Promise<boolean> {
-    const { session, isAnonymous } = await getServerSession()
-    if (!session || isAnonymous) return false
+    const { session } = await getServerSession()
+    if (!session || session.is_anonymous) return false
 
     const workspaceId = await requireWorkspaceId()
     const supabase = createServiceRoleClient()
@@ -392,7 +392,7 @@ async function refuseSecondPlanSubscription(workspaceId: number, customerId: str
     }
 
     const { data: subscriptions } = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 })
-    if (subscriptions.some(subscription => !isTemplateSubscription(subscription) && LIVE_SUBSCRIPTION_STATUSES.has(subscription.status))) {
+    if (subscriptions.some(subscription => !isTemplateSubscription(subscription) && !isLifetimeAddonsSubscription(subscription) && LIVE_SUBSCRIPTION_STATUSES.has(subscription.status))) {
         throw new AppError('alreadySubscribed')
     }
 }
@@ -570,7 +570,7 @@ export async function getSubscriptionState(): Promise<SubscriptionState | null> 
     const paymentMethod = subscription.default_payment_method ?? customer?.invoice_settings?.default_payment_method ?? null
     const hasPaymentMethod = !!paymentMethod
 
-    const derived = quantitiesToColumns(quantities)
+    const derived = baseLimitsToColumns()
     const pendingDowngrade: SubscriptionState['pendingDowngrade'] = {}
     if (subscription.status !== 'trialing' && workspace.rerun_budget_micros > derived.rerun_budget_micros) pendingDowngrade.rerun_budget_micros = derived.rerun_budget_micros
 
@@ -601,7 +601,7 @@ export async function getSubscriptionState(): Promise<SubscriptionState | null> 
     }
 }
 
-function savedCard(paymentMethod: string | Stripe.PaymentMethod | null): SavedCard | null {
+export function savedCard(paymentMethod: string | Stripe.PaymentMethod | null): SavedCard | null {
     if (!paymentMethod || typeof paymentMethod === 'string' || !paymentMethod.card) return null
     const { brand, last4, exp_month, exp_year } = paymentMethod.card
     return { brand, last4, expMonth: exp_month, expYear: exp_year }
@@ -1070,7 +1070,7 @@ export async function requestRenewalReminder(): Promise<string> {
 // --- Plan changes from the plan dialog: agents and interval together ---
 
 // Every plan item moved onto `selection`: the base and add-on items keep their ids and change price,
-// add-ons appear or go, and a legacy seat or agent pack item goes with the old interval, since a
+// add-ons appear or go, and a legacy seat, agent pack or credit pack item goes with the old interval, since a
 // subscription bills every item on the same one.
 function replacementItems(subscription: Stripe.Subscription, { quantities, interval }: PlanSelection): PlanItemChange[] {
     const priceArm = priceArmOfItems(subscription.items.data)
@@ -1139,7 +1139,7 @@ async function updateWithPayment(subscriptionId: string, params: Stripe.Subscrip
 
 // A pending update also holds a plain decline, which leaves the browser nothing to confirm: only a
 // payment waiting on the bank goes back to it, a refusal comes back in the card's own words.
-async function assertPaymentAwaitsConfirmation(clientSecret: string): Promise<void> {
+export async function assertPaymentAwaitsConfirmation(clientSecret: string): Promise<void> {
     const intent = await stripe.paymentIntents.retrieve(clientSecret.split('_secret_')[0]!)
     if (intent.status === 'requires_action') return
     const refusal = intent.last_payment_error
@@ -1233,7 +1233,7 @@ async function finishPlanChange(subscription: Stripe.Subscription, selection: Pl
 // subscription, so is the selection it was part of. The subscription is read again rather than
 // taken from the event, whose snapshot would hide a schedule or a clearing a first delivery did.
 export async function finishPendingPlanChange(subscription: Stripe.Subscription): Promise<void> {
-    if (isTemplateSubscription(subscription)) return
+    if (isTemplateSubscription(subscription) || isLifetimeAddonsSubscription(subscription)) return
     const live = await stripe.subscriptions.retrieve(subscription.id)
     const selection = parsePlanSelection(live.metadata?.[PLAN_CHANGE_AFTER_PAYMENT_KEY])
     if (!selection) return
@@ -1400,19 +1400,21 @@ export async function adoptCheckoutPaymentMethodAsDefault(session: Stripe.Checko
     }
 }
 
-// A trialing subscription is paid for by a SetupIntent, not a PaymentIntent, and the subscription
-// does not always carry the payment method by the time the session completes. The session is
-// optional because `customer.subscription.created` carries none: there, the subscription's own
-// default is all there is, and a null answer simply means "ask again on the checkout event".
+// The card the session's SetupIntent just collected comes first: on a past-due subscription the
+// subscription's own default is the card that was declined, and paying with it again only gets
+// `previously_declined_do_not_retry`. The subscription's default is the fallback for a session that
+// collected nothing (a subscription checkout without trial) and for `customer.subscription.created`,
+// which carries no session; a null answer there simply means "ask again on the checkout event".
 export async function checkoutPaymentMethodId(session: Stripe.Checkout.Session | undefined, subscription: Stripe.Subscription): Promise<string | null> {
-    const fromSubscription = subscription.default_payment_method
-    if (fromSubscription) return typeof fromSubscription === 'string' ? fromSubscription : fromSubscription.id
+    if (session?.setup_intent) {
+        const setupIntentId = typeof session.setup_intent === 'string' ? session.setup_intent : session.setup_intent.id
+        const setupIntent = await stripe.setupIntents.retrieve(setupIntentId)
+        if (setupIntent.payment_method) return typeof setupIntent.payment_method === 'string' ? setupIntent.payment_method : setupIntent.payment_method.id
+    }
 
-    if (!session?.setup_intent) return null
-    const setupIntentId = typeof session.setup_intent === 'string' ? session.setup_intent : session.setup_intent.id
-    const setupIntent = await stripe.setupIntents.retrieve(setupIntentId)
-    if (!setupIntent.payment_method) return null
-    return typeof setupIntent.payment_method === 'string' ? setupIntent.payment_method : setupIntent.payment_method.id
+    const fromSubscription = subscription.default_payment_method
+    if (!fromSubscription) return null
+    return typeof fromSubscription === 'string' ? fromSubscription : fromSubscription.id
 }
 
 // null = unlimited, so it wins any max.
@@ -1447,7 +1449,7 @@ type ExistingWorkspaceRow = {
 // the lifecycle events of a subscription that merely shares the customer, which must never rewrite
 // the snapshot of the one being billed.
 export async function applySubscriptionToWorkspace(subscription: Stripe.Subscription, { adopt = true }: { adopt?: boolean } = {}): Promise<void> {
-    if (isTemplateSubscription(subscription)) return
+    if (isTemplateSubscription(subscription) || isLifetimeAddonsSubscription(subscription)) return
 
     const workspaceId = await findWorkspaceId(subscription)
     if (!workspaceId) return
@@ -1472,7 +1474,7 @@ export async function applySubscriptionToWorkspace(subscription: Stripe.Subscrip
         return
     }
 
-    const derived = quantitiesToColumns(quantities)
+    const derived = baseLimitsToColumns()
     const advanced = hasPeriodAdvanced(existing?.current_period_end, newPeriodEnd)
     const limits = advanced || !existing ? derived : mergeHeldLimits(existing, derived)
 
@@ -1503,12 +1505,8 @@ export async function applySubscriptionToWorkspace(subscription: Stripe.Subscrip
 
     // A trial adds no monthly credit: it runs on the signup top-up. The budget is held where it was,
     // after the merge, otherwise the max would hand out the full plan budget. The derived budget
-    // arrives on conversion, when this runs again with an entitled `active` status.
-    //
-    // This cannot swallow a credit pack the workspace paid for: checkout only ever sells the
-    // bare base plan, and buying an add-on ends the trial (changePlan), so a `trialing`
-    // subscription carries no credit pack. The one add-on it can carry is an app slot
-    // (addTrialSlot), which buys no credit.
+    // arrives on conversion, when this runs again with an entitled `active` status. Credit bought
+    // once is not in this column, so holding it swallows none.
     if (subscription.status === 'trialing') update.rerun_budget_micros = existing?.rerun_budget_micros ?? 0
 
     // A trial runs TRIAL_ACTIVE_AGENTS, not the plan's count, and the column is what the gate reads.
@@ -1532,10 +1530,6 @@ export async function applySubscriptionToWorkspace(subscription: Stripe.Subscrip
         await requestAgentActivationSync(woken, { switchOn: true })
     }
 
-    // Starting a trial locks the premium models on the box, converting it unlocks them. Not awaited:
-    // the box may be asleep, and a webhook that waits for it times out.
-    void syncEnginePlan(workspaceId)
-
     await reportSubscriptionTransition(subscription, workspaceId, existing?.subscription_status ?? null)
 
     // Only the cardless trial is cancelled for a missing card: a Checkout trial always has one.
@@ -1556,7 +1550,7 @@ export async function stampFirstPlanPayment(invoice: Stripe.Invoice): Promise<vo
     if (!invoice.amount_paid || invoice.amount_paid <= 0) return
 
     const subscription = await subscriptionOfInvoice(invoice)
-    if (!subscription || isTemplateSubscription(subscription)) return
+    if (!subscription || isTemplateSubscription(subscription) || isLifetimeAddonsSubscription(subscription)) return
 
     const workspaceId = await findWorkspaceId(subscription)
     if (!workspaceId) return
@@ -1585,7 +1579,7 @@ function mergeHeldLimits(existing: ExistingWorkspaceRow, derived: WorkspaceLimit
 // ends is the right to run, so every agent is switched off. Re-subscribing gives the slots back and
 // the user picks which agents fill them.
 export async function markSubscriptionCanceled(subscription: Stripe.Subscription): Promise<void> {
-    if (isTemplateSubscription(subscription)) return
+    if (isTemplateSubscription(subscription) || isLifetimeAddonsSubscription(subscription)) return
     const workspaceId = await findWorkspaceId(subscription)
     if (!workspaceId) return
     if (!(await ownsWorkspacePlan(workspaceId, subscription))) return
@@ -1609,7 +1603,7 @@ function awaitsPendingUpdatePayment(subscription: Stripe.Subscription, invoice: 
 // the teardown counts from `payment_failed_at` (PAYMENT_FAILED_GRACE_MS), and the owner is told
 // here. Both happen on the first attempt only, so a retry neither restarts the day nor writes again.
 export async function markSubscriptionPastDue(subscription: Stripe.Subscription, invoice: Stripe.Invoice): Promise<void> {
-    if (isTemplateSubscription(subscription)) return
+    if (isTemplateSubscription(subscription) || isLifetimeAddonsSubscription(subscription)) return
     if (awaitsPendingUpdatePayment(subscription, invoice)) return
     const workspaceId = await findWorkspaceId(subscription)
     if (!workspaceId) return

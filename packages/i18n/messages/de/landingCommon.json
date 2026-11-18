@@ -1,7 +1,7 @@
 {
     "site": {
-        "title": "Rerun: KI-Mitarbeiter, die mit deinem ChatGPT- oder Claude-Abo laufen",
-        "description": "Stell KI-Mitarbeiter für Vertrieb, Support, Marketing und Verwaltung ein. Sie laufen mit deinem ChatGPT- oder Claude-Abo, inklusivem Guthaben oder deinem API-Schlüssel. {trialDays} Tage kostenlos testen."
+        "title": "Rerun: KI-Mitarbeiter mit deinem ChatGPT- oder Claude-Abo",
+        "description": "KI-Mitarbeiter für Vertrieb, Support, Marketing und Verwaltung, mit deinem ChatGPT- oder Claude-Abo, Guthaben oder API-Schlüssel. {trialDays} Tage gratis."
     },
     "nav": {
         "items": {
@@ -160,6 +160,8 @@
         "main": "Hauptmenü",
         "starOnGithub": "Stern auf GitHub",
         "login": "Anmelden",
+        "download": "Herunterladen",
+        "openWebApp": "Web-App öffnen",
         "browseAll": {
             "label": "Alle Vorlagen ansehen",
             "description": "Die ganze Bibliothek, alle Kategorien auf einer Seite."
@@ -209,6 +211,7 @@
             "legal": "Rechtliches"
         },
         "resources": {
+            "about": "Über uns",
             "docs": "Doku",
             "github": "GitHub",
             "pricing": "Preise",
@@ -258,11 +261,6 @@
             "other": "Sonstiges"
         },
         "cookieSettings": "Cookie-Einstellungen"
-    },
-    "languageBanner": {
-        "offer": "Diese Seite gibt es auch auf Deutsch.",
-        "open": "Auf Deutsch lesen",
-        "dismiss": "Schließen"
     },
     "discord": "Tritt unserem Discord bei",
     "tabNudge": {

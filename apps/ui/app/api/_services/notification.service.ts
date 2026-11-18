@@ -7,20 +7,23 @@ import { toBoxScope } from '@/app/api/_auth/box-scope'
 import type { Database } from '@/app/api/database.types'
 import { BANNER_WARM_INLINE_MS, buildUnsubscribeUrl, emailBoardBanner, pushNotification, sendIncidentResolvedEmail, sendNotificationEmail } from '@rerun/cloud/email'
 import { notificationUrl } from '@/lib/app-url'
+import { seedSessionTitle } from '@/lib/chat/session-title'
 import type { NotificationPayload } from '@/lib/engine/types'
 import { RERUN_BUDGET_ERROR_CODE, suppressesErrorEmail } from '@/lib/notifications/budget-notice'
 import { recipientLocale } from '@/lib/i18n/recipient-locale'
 import { announcesRecovery, emailSourceLabel, incidentKeyFor, resolvedIncidentKeysFor } from '@/lib/notifications/incidents'
-import { automatedRunOutcome, automatedRunReport, completionStatus, isRunCompletion, storedKind, type StoredNotification } from '@/lib/notifications/inbound'
+import { agentReplyOf, automatedRunOutcome, automatedRunReport, completionStatus, isRunCompletion, storedKind, type StoredNotification } from '@/lib/notifications/inbound'
 import { NOTIFICATION_EMAILS_PAUSED, coworkerRuleOf, normalizeNotificationPrefs } from '@/lib/notifications/prefs'
 import { isPresent } from '@/lib/notifications/presence'
 import { emailReasonSentence } from '@/lib/notifications/reason-copy'
 import { computeRecipients, needsOwnerFollow, wantsIncidentEmail, wantsRecoveryEmail, type NotificationRecipients, type RoutedEvent, type RoutedMember } from '@/lib/notifications/routing'
 import { boardStatusOfKind } from '@/lib/og/team-board'
+import { setForemanConversationStatus } from '@/lib/foreman/conversation'
 import { generateRunTitle } from '@/lib/ai/generate-run-title'
 import { createServiceRoleClient } from '@/supabase/serviceRole'
 import { selectMany, selectMaybeSingle } from '@/supabase/supabase-helpers'
 import { ensureSessionRow } from './chat.service'
+import { recordAgentReply } from './session-preview.service'
 import { writeNotificationPrefs } from './notification-audience.service'
 import { loadPresence } from './presence.service'
 import { authenticateEngineToken } from './workspace-engine.service'
@@ -45,8 +48,12 @@ export async function recordNotification(token: string, payload: NotificationPay
     if (!engine) return { ok: false, status: 401, error: 'Unauthorized' }
 
     // The foreman answers in the column the user is looking at: none of its runs is inbox news, an
-    // email, or the first agent run that counts as activation.
-    if (payload.agentId === FOREMAN_AGENT_ID) return { ok: true }
+    // email, or the first agent run that counts as activation. Where a run stopped still shows, on
+    // its thread in General.
+    if (payload.agentId === FOREMAN_AGENT_ID) {
+        await applyForemanStatus(engine.workspaceId, payload)
+        return { ok: true }
+    }
 
     const { data: agent } = await selectMaybeSingle(supabase, 'agents', ['id', 'name', 'space_id'] as const, { workspace_id: engine.workspaceId, engine_agent_id: payload.agentId })
 
@@ -93,6 +100,10 @@ export async function recordNotification(token: string, payload: NotificationPay
     await applySessionStatus(supabase, agent?.id ?? null, notification)
     // After the response: a model call must not hold the engine's webhook open.
     after(() => retitleAutomatedRun(supabase, agent?.id ?? null, notification))
+    const reply = agentReplyOf(notification)
+    const agentId = agent?.id
+    const engineSessionId = notification.sessionId
+    if (reply && agentId && engineSessionId) after(() => recordAgentReply(agentId, engineSessionId, reply))
 
     if (!engine.isSandbox) await reportChatRun(engine.workspaceId, agent?.id ?? notification.agentId, notification)
 
@@ -157,6 +168,12 @@ async function mirrorSession(supabase: ServiceRoleClient, workspaceId: number, a
     }
 }
 
+async function applyForemanStatus(workspaceId: number, payload: NotificationPayload): Promise<void> {
+    const kind = storedKind(payload)
+    const status = kind ? completionStatus({ ...payload, kind }) : null
+    if (status && payload.sessionId) await setForemanConversationStatus(workspaceId, payload.sessionId, status)
+}
+
 function isCancelled(notification: StoredNotification): boolean {
     return (notification.metadata as { status?: unknown } | null)?.status === 'cancelled'
 }
@@ -182,7 +199,8 @@ async function applySessionStatus(supabase: ServiceRoleClient, agentId: string |
 
 // A schedule or a trigger opens its session under the routine's name, and every run of it would
 // read the same in the list. Once over, the session is titled after what the run did, the routine's
-// name kept in `automation_name`. Best-effort: on any failure the session keeps the routine's name.
+// name kept in `automation_name`. A session someone renamed keeps the name they gave it.
+// Best-effort: on any failure the session keeps the routine's name.
 async function retitleAutomatedRun(supabase: ServiceRoleClient, agentId: string | null, notification: StoredNotification): Promise<void> {
     const run = automatedRunReport(notification)
     if (!run || !agentId || !notification.sessionId) return
@@ -191,9 +209,10 @@ async function retitleAutomatedRun(supabase: ServiceRoleClient, agentId: string 
         if (!session) return
         const routineName = session.automation_name ?? session.title
         const generated = run.report ? await generateRunTitle(routineName, run.report, run.failed) : null
+        const renamed = session.title !== seedSessionTitle(routineName)
         const { error } = await supabase
             .from('sessions')
-            .update<SessionUpdate>({ automation_name: routineName, outcome: automatedRunOutcome(run.failed, generated?.nothingToReport ?? false), ...(generated && { title: generated.title }) })
+            .update<SessionUpdate>({ automation_name: routineName, outcome: automatedRunOutcome(run.failed, generated?.nothingToReport ?? false), ...(generated && !renamed && { title: generated.title }) })
             .eq('id', session.id)
         if (error) console.error('[notification] failed to retitle the run', error)
     } catch (err) {
